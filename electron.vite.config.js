@@ -11,6 +11,7 @@ export default defineConfig({
           index: resolve(__dirname, 'src/main/index.js'),
           'chromium-path': resolve(__dirname, 'src/main/chromium-path.js'),
           'close-behavior': resolve(__dirname, 'src/main/close-behavior.js'),
+          'profile-copy': resolve(__dirname, 'src/main/profile-copy.js'),
           'xray-assets': resolve(__dirname, 'src/main/xray-assets.js')
         }
       }

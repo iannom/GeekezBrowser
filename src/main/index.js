@@ -15,6 +15,12 @@ const { promisify } = require('util');
 const { getChromiumPath: resolveChromiumPathForApp } = require('./chromium-path');
 const { CLOSE_BEHAVIOR, normalizeCloseBehavior, resolveCloseBehavior } = require('./close-behavior');
 const { resolveXrayAssetName } = require('./xray-assets');
+const {
+    PROFILE_COPY_MODE,
+    normalizeProfileCopyMode,
+    normalizeProfileCopyIds,
+    buildProfileCopyInput
+} = require('./profile-copy');
 const gzip = promisify(zlib.gzip);
 const gunzip = promisify(zlib.gunzip);
 const initSqlJs = require('sql.js');
@@ -913,6 +919,7 @@ function normalizeSettingsSnapshot(settings) {
     nextSettings.notify = !!nextSettings.notify;
     nextSettings.userExtensions = normalizeUserExtensions(nextSettings.userExtensions || []);
     nextSettings.closeBehavior = normalizeCloseBehavior(nextSettings.closeBehavior);
+    nextSettings.watermarkStyle = normalizeWatermarkStyle(nextSettings.watermarkStyle);
     return nextSettings;
 }
 
@@ -956,6 +963,58 @@ function normalizeDebugPort(rawPort) {
     const parsed = Number(rawPort);
     if (!Number.isInteger(parsed) || parsed < 1024 || parsed > 65535) return null;
     return parsed;
+}
+
+const TIMEZONE_ALIASES = {
+    'America/Honolulu': 'Pacific/Honolulu',
+    'America/Atlanta': 'America/New_York',
+    'America/Boston': 'America/New_York',
+    'America/Miami': 'America/New_York',
+    'America/Philadelphia': 'America/New_York',
+    'America/Washington_DC': 'America/New_York',
+    'America/Austin': 'America/Chicago',
+    'America/Dallas': 'America/Chicago',
+    'America/Houston': 'America/Chicago',
+    'America/San_Antonio': 'America/Chicago',
+    'America/Las_Vegas': 'America/Los_Angeles',
+    'America/San_Diego': 'America/Los_Angeles',
+    'America/San_Francisco': 'America/Los_Angeles',
+    'America/San_Jose': 'America/Los_Angeles',
+    'America/Seattle': 'America/Los_Angeles',
+    'America/Salt_Lake_City': 'America/Denver',
+    'Europe/Birmingham': 'Europe/London',
+    'Europe/Manchester': 'Europe/London',
+    'Europe/Marseille': 'Europe/Paris',
+    'Europe/Barcelona': 'Europe/Madrid',
+    'Europe/Frankfurt': 'Europe/Berlin',
+    'Europe/Munich': 'Europe/Berlin',
+    'Europe/Milan': 'Europe/Rome',
+    'Asia/Beijing': 'Asia/Shanghai',
+    'Asia/Kyoto': 'Asia/Tokyo',
+    'Asia/Osaka': 'Asia/Tokyo',
+    'Asia/Mumbai': 'Asia/Kolkata'
+};
+
+function isSupportedTimezone(value) {
+    if (typeof value !== 'string' || !value.trim()) return false;
+    try {
+        new Intl.DateTimeFormat('en-US', { timeZone: value }).format(new Date());
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+function normalizeTimezoneValue(value) {
+    if (value === undefined || value === null || value === '') return value;
+    const raw = String(value).trim();
+    if (!raw || raw === 'Auto' || raw === 'Auto (No Change)') return 'Auto';
+
+    const mapped = TIMEZONE_ALIASES[raw] || raw;
+    if (isSupportedTimezone(mapped)) return mapped;
+
+    console.warn(`Invalid timezone ignored: ${raw}`);
+    return 'Auto';
 }
 
 function hasRestorableSession(userDataDir) {
@@ -1042,7 +1101,7 @@ function normalizeFingerprintOptions(data = {}) {
     const normalized = {
         ...inputFp,
         uaMode: firstDefined(data.uaMode, inputFp.uaMode),
-        timezone: firstDefined(data.timezone, inputFp.timezone),
+        timezone: normalizeTimezoneValue(firstDefined(data.timezone, inputFp.timezone)),
         city: firstDefined(data.city, inputFp.city),
         geolocation: firstDefined(data.geolocation, inputFp.geolocation),
         language: firstDefined(data.language, inputFp.language),
@@ -1095,6 +1154,95 @@ function normalizeFingerprint(data = {}) {
         browserMajorVersion: generated.browserMajorVersion,
         browserFullVersion: generated.browserFullVersion
     };
+}
+
+function normalizeWatermarkStyle(style) {
+    const normalized = String(style || 'none').trim().toLowerCase();
+    if (['enhanced', 'banner'].includes(normalized)) return normalized;
+    return 'none';
+}
+
+function buildDeviceMetricsOverride(fingerprint = {}) {
+    const screenWidth = Number(fingerprint.screen?.width || fingerprint.window?.width);
+    const screenHeight = Number(fingerprint.screen?.height || fingerprint.window?.height);
+    if (!Number.isFinite(screenWidth) || !Number.isFinite(screenHeight) || screenWidth <= 0 || screenHeight <= 0) {
+        return null;
+    }
+
+    const normalizedScreenWidth = Math.floor(screenWidth);
+    const normalizedScreenHeight = Math.floor(screenHeight);
+    const viewportWidth = Number(fingerprint.viewport?.width);
+    const viewportHeight = Number(fingerprint.viewport?.height);
+    const normalizedViewportWidth = Number.isFinite(viewportWidth) && viewportWidth > 0
+        ? Math.floor(viewportWidth)
+        : normalizedScreenWidth;
+    const normalizedViewportHeight = Number.isFinite(viewportHeight) && viewportHeight > 0
+        ? Math.floor(viewportHeight)
+        : Math.max(0, normalizedScreenHeight - 88);
+
+    return {
+        width: normalizedViewportWidth,
+        height: normalizedViewportHeight,
+        deviceScaleFactor: 1,
+        mobile: false,
+        screenWidth: normalizedScreenWidth,
+        screenHeight: normalizedScreenHeight,
+        positionX: 0,
+        positionY: 0,
+        dontSetVisibleSize: false
+    };
+}
+
+function normalizeGeolocationOverride(geolocation) {
+    if (!geolocation || typeof geolocation !== 'object') return null;
+    const latitude = Number(geolocation.latitude);
+    const longitude = Number(geolocation.longitude);
+    const accuracy = Number(geolocation.accuracy || 100);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+
+    return {
+        latitude,
+        longitude,
+        accuracy: Number.isFinite(accuracy) && accuracy > 0 ? accuracy : 100
+    };
+}
+
+async function grantPageGeolocationPermission(browser, page, targetUrl = '') {
+    if (!browser || !page || typeof browser.defaultBrowserContext !== 'function') return;
+    try {
+        const pageUrl = targetUrl || page.url();
+        const origin = new URL(pageUrl).origin;
+        if (!/^https?:\/\//i.test(origin)) return;
+        await browser.defaultBrowserContext().overridePermissions(origin, ['geolocation']);
+    } catch (e) {
+        const msg = e && e.message ? e.message : String(e || '');
+        if (msg && !msg.includes('Cannot override permissions')) {
+            console.warn('Geolocation permission override failed:', msg);
+        }
+    }
+}
+
+function registerGeolocationPermissionReplay(browser, page, session, geolocationOverride) {
+    if (!browser || !page || !session || !geolocationOverride || page.__geekezGeoReplayRegistered) return;
+    page.__geekezGeoReplayRegistered = true;
+
+    page.on('framenavigated', async (frame) => {
+        try {
+            if (typeof page.mainFrame === 'function' && frame !== page.mainFrame()) return;
+            await grantPageGeolocationPermission(browser, page, frame.url());
+            await session.send('Emulation.setGeolocationOverride', geolocationOverride);
+        } catch (e) {
+            const msg = e && e.message ? e.message : String(e || '');
+            if (!msg.includes('Target closed') && !msg.includes('Session closed')) {
+                console.warn('Geolocation replay failed:', msg);
+            }
+        }
+    });
+}
+
+function shouldDisableSessionRestoreForFingerprint(fingerprint = {}) {
+    return fingerprint.uaMode !== 'none' && !!fingerprint.userAgentMetadata;
 }
 
 async function allocateDebugPortIfNeeded(settings, profiles, requestedPort) {
@@ -1200,6 +1348,142 @@ async function buildProfileFromInput(rawData, profiles, settings, existingProfil
         customArgs: firstDefined(data.customArgs, existingProfile?.customArgs, '') || '',
         isSetup: existingProfile?.isSetup || false,
         createdAt: existingProfile?.createdAt || Date.now()
+    };
+}
+
+const PROFILE_DATA_COPY_SKIP_NAMES = new Set([
+    'SingletonLock',
+    'SingletonCookie',
+    'SingletonSocket',
+    'xray_run.log'
+]);
+
+function shouldCopyProfileDataPath(sourcePath) {
+    return !PROFILE_DATA_COPY_SKIP_NAMES.has(path.basename(sourcePath));
+}
+
+async function readEncryptedPasswordsStrict(pwFile, profileId) {
+    if (!fs.existsSync(pwFile)) return [];
+
+    try {
+        const encrypted = await fs.readFile(pwFile);
+        const decrypted = decryptData(encrypted, 'GeekEZ_PW_' + profileId);
+        const passwords = JSON.parse(decrypted.toString('utf8'));
+        if (!Array.isArray(passwords)) {
+            throw new Error('密码文件格式无效');
+        }
+        return passwords;
+    } catch (encryptedError) {
+        try {
+            const plain = await fs.readJson(pwFile);
+            if (Array.isArray(plain)) return plain;
+        } catch (plainError) {
+            throw encryptedError;
+        }
+        throw encryptedError;
+    }
+}
+
+async function copyProfileDataDirectory(sourceId, targetId) {
+    const sourceDir = path.join(DATA_PATH, sourceId);
+    const targetDir = path.join(DATA_PATH, targetId);
+
+    if (!fs.existsSync(sourceDir)) {
+        return { copied: false };
+    }
+    if (fs.existsSync(targetDir)) {
+        throw new Error('目标环境数据目录已存在');
+    }
+
+    await fs.copy(sourceDir, targetDir, {
+        overwrite: false,
+        filter: shouldCopyProfileDataPath
+    });
+
+    const sourcePasswordFile = path.join(sourceDir, 'passwords.json');
+    if (fs.existsSync(sourcePasswordFile)) {
+        const passwords = await readEncryptedPasswordsStrict(sourcePasswordFile, sourceId);
+        await writeEncryptedPasswords(path.join(targetDir, 'passwords.json'), passwords, targetId);
+    }
+
+    return { copied: true };
+}
+
+async function cleanupCopiedProfileData(targetId) {
+    if (!targetId) return;
+    const targetDir = path.join(DATA_PATH, targetId);
+    await fs.remove(targetDir).catch((err) => {
+        console.error('清理复制环境数据失败:', err);
+    });
+}
+
+async function copyProfilesByIds(payload = {}) {
+    const ids = normalizeProfileCopyIds(payload.ids ?? payload.id);
+    const mode = normalizeProfileCopyMode(payload.mode);
+    const profiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
+    if (!Array.isArray(profiles)) {
+        throw new Error('profiles.json 格式无效');
+    }
+
+    const settings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : {};
+    const originalProfiles = [...profiles];
+    const nextProfiles = [...profiles];
+    const results = [];
+    const copiedTargetIds = [];
+
+    for (const id of ids) {
+        const sourceProfile = originalProfiles.find(profile => profile.id === id);
+        if (!sourceProfile) {
+            results.push({ id, success: false, message: '源环境不存在' });
+            continue;
+        }
+
+        if (mode === PROFILE_COPY_MODE.FULL && activeProcesses[id]) {
+            results.push({ id, success: false, message: '完整复制前请先关闭正在运行的源环境' });
+            continue;
+        }
+
+        let newProfile = null;
+        try {
+            const copyInput = buildProfileCopyInput(sourceProfile);
+            newProfile = await buildProfileFromInput(copyInput, nextProfiles, settings);
+            let dataCopied = false;
+            if (mode === PROFILE_COPY_MODE.FULL) {
+                const copyResult = await copyProfileDataDirectory(sourceProfile.id, newProfile.id);
+                dataCopied = !!copyResult.copied;
+                newProfile.isSetup = dataCopied && !!sourceProfile.isSetup;
+            }
+
+            nextProfiles.push(newProfile);
+            copiedTargetIds.push(newProfile.id);
+            results.push({ id, success: true, profile: newProfile, dataCopied });
+        } catch (err) {
+            if (newProfile?.id) {
+                await cleanupCopiedProfileData(newProfile.id);
+            }
+            results.push({ id, success: false, message: err.message || '复制失败' });
+        }
+    }
+
+    if (copiedTargetIds.length > 0) {
+        try {
+            await fs.writeJson(PROFILES_FILE, nextProfiles);
+        } catch (err) {
+            for (const targetId of copiedTargetIds) {
+                await cleanupCopiedProfileData(targetId);
+            }
+            throw err;
+        }
+        notifyUIRefresh();
+    }
+
+    const failedCount = results.filter(item => !item.success).length;
+    return {
+        success: failedCount === 0,
+        mode,
+        copied: copiedTargetIds.length,
+        failed: failedCount,
+        results
     };
 }
 
@@ -1314,7 +1598,7 @@ async function handleApiRequest(method, pathname, body, params) {
                     isDestroyed: () => true
                 }
             };
-        const launchMessage = await launchProfileHandler(launchEvent, profile.id, settings.watermarkStyle || 'enhanced');
+        const launchMessage = await launchProfileHandler(launchEvent, profile.id, settings.watermarkStyle || 'none');
         const launchedPort = await resolveRemoteDebugPortForProfile(profile.id, profile.debugPort);
         const launchedPayload = {
             success: true,
@@ -1556,7 +1840,8 @@ function loadSettings() {
     return {
         enableRemoteDebugging: false,
         enableUaWebglModify: false,
-        closeBehavior: CLOSE_BEHAVIOR.TRAY
+        closeBehavior: CLOSE_BEHAVIOR.TRAY,
+        watermarkStyle: 'none'
     };
 }
 
@@ -1737,7 +2022,7 @@ async function launchOrFocusProfileFromTray(profileId) {
             try {
                 const settings = readSettingsSync();
                 const launchEvent = getProfileLaunchEventSender();
-                await launchProfileHandler(launchEvent, profile.id, settings.watermarkStyle || 'enhanced');
+                await launchProfileHandler(launchEvent, profile.id, settings.watermarkStyle || 'none');
             } catch (e) { }
         }
         await refreshTrayMenu();
@@ -1747,7 +2032,7 @@ async function launchOrFocusProfileFromTray(profileId) {
     try {
         const settings = readSettingsSync();
         const launchEvent = getProfileLaunchEventSender();
-        await launchProfileHandler(launchEvent, profile.id, settings.watermarkStyle || 'enhanced');
+        await launchProfileHandler(launchEvent, profile.id, settings.watermarkStyle || 'none');
     } catch (err) {
         dialog.showErrorBox('启动环境失败', String(err?.message || err || '未知错误'));
     }
@@ -2046,7 +2331,7 @@ async function generateExtension(profilePath, fingerprint, profileName, watermar
         ],
         action: { default_popup: "popup.html" }
     };
-    const style = watermarkStyle || 'enhanced';
+    const style = normalizeWatermarkStyle(watermarkStyle);
     const scriptContent = getInjectScript(fingerprint, profileName, style);
     await fs.writeJson(path.join(extDir, 'manifest.json'), manifest);
     await fs.writeFile(path.join(extDir, 'content.js'), scriptContent);
@@ -2811,6 +3096,9 @@ ipcMain.handle('save-profile', async (event, data) => {
     notifyUIRefresh();
     return newProfile;
 });
+ipcMain.handle('copy-profiles', async (event, payload) => {
+    return await copyProfilesByIds(payload || {});
+});
 ipcMain.handle('delete-profile', async (event, id) => {
     // 关闭正在运行的进程
     if (activeProcesses[id]) {
@@ -2874,6 +3162,7 @@ ipcMain.handle('get-settings', async () => {
             enableRemoteDebugging: false,
             enableUaWebglModify: false,
             closeBehavior: CLOSE_BEHAVIOR.TRAY,
+            watermarkStyle: 'none',
             userExtensions: []
         };
     }
@@ -3752,7 +4041,8 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
         userExtensions: [],
         preProxies: [],
         mode: 'single',
-        enablePreProxy: false
+        enablePreProxy: false,
+        watermarkStyle: 'none'
     }));
 
     const profiles = await fs.readJson(PROFILES_FILE);
@@ -3865,7 +4155,7 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
         }
 
         // 1. 生成 GeekEZ Guard 扩展（使用传递的水印样式）
-        const style = watermarkStyle || 'enhanced'; // 默认使用增强水印
+        const style = normalizeWatermarkStyle(watermarkStyle || settings.watermarkStyle);
         const extPath = await generateExtension(profileDir, profile.fingerprint, profile.name, style, profileId);
 
         // 2. 获取当前环境需要加载的用户扩展
@@ -3879,7 +4169,8 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
 
         // 3. 合并所有扩展路径
         const extPaths = [extPath, ...userExtPaths].join(',');
-        const shouldRestoreSession = hasRestorableSession(userDataDir);
+        const shouldRestoreSession = hasRestorableSession(userDataDir) &&
+            !shouldDisableSessionRestoreForFingerprint(profile.fingerprint);
 
         // 4. 构建启动参数（性能优化）
 
@@ -4104,19 +4395,48 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
                     await page.evaluateOnNewDocument(webglOverrideScript);
                 } catch (e) { }
 
-                try {
-                    await page.evaluate(fingerprintInjectScript);
-                } catch (e) { }
-                try {
-                    await page.evaluate(webglOverrideScript);
-                } catch (e) { }
-
                 const session = await page.createCDPSession();
                 try {
                     await session.send('Page.enable');
                     await session.send('Page.addScriptToEvaluateOnNewDocument', { source: webglOverrideScript });
                 } catch (e) { }
                 try { await session.send('Network.enable'); } catch (e) { }
+                try {
+                    await session.send('Network.setBypassServiceWorker', { bypass: true });
+                } catch (e) {
+                    console.warn('Service Worker bypass failed:', e.message || e);
+                }
+
+                const metricsOverride = buildDeviceMetricsOverride(profile.fingerprint);
+                if (metricsOverride) {
+                    try {
+                        await session.send('Emulation.setDeviceMetricsOverride', metricsOverride);
+                    } catch (e) {
+                        console.warn('Device metrics override failed:', e.message || e);
+                    }
+                }
+
+                const hardwareConcurrency = Number(profile.fingerprint?.hardwareConcurrency);
+                if (Number.isFinite(hardwareConcurrency) && hardwareConcurrency > 0) {
+                    try {
+                        await session.send('Emulation.setHardwareConcurrencyOverride', {
+                            hardwareConcurrency: Math.floor(hardwareConcurrency)
+                        });
+                    } catch (e) {
+                        console.warn('Hardware concurrency override failed:', e.message || e);
+                    }
+                }
+
+                const geolocationOverride = normalizeGeolocationOverride(profile.fingerprint?.geolocation);
+                if (geolocationOverride) {
+                    await grantPageGeolocationPermission(browser, page);
+                    registerGeolocationPermissionReplay(browser, page, session, geolocationOverride);
+                    try {
+                        await session.send('Emulation.setGeolocationOverride', geolocationOverride);
+                    } catch (e) {
+                        console.warn('Geolocation override failed:', e.message || e);
+                    }
+                }
 
                 if (hasLanguageOverride) {
                     try {
@@ -4132,10 +4452,13 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
                     } catch (e) { }
                 }
 
-                if (profile.fingerprint?.timezone && profile.fingerprint.timezone !== 'Auto') {
+                const timezoneOverride = normalizeTimezoneValue(profile.fingerprint?.timezone);
+                if (timezoneOverride && timezoneOverride !== 'Auto') {
                     try {
-                        await session.send('Emulation.setTimezoneOverride', { timezoneId: profile.fingerprint.timezone });
-                    } catch (e) { }
+                        await session.send('Emulation.setTimezoneOverride', { timezoneId: timezoneOverride });
+                    } catch (e) {
+                        console.warn('Timezone override failed:', e.message || e);
+                    }
                 }
 
                 if (profile.fingerprint?.userAgent) {
@@ -4168,6 +4491,13 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
 
                     await session.send('Network.setUserAgentOverride', payload);
                 }
+
+                try {
+                    await page.evaluate(fingerprintInjectScript);
+                } catch (e) { }
+                try {
+                    await page.evaluate(webglOverrideScript);
+                } catch (e) { }
             } catch (err) {
                 const msg = String(err && err.message ? err.message : '');
                 if (msg.includes('No target with given id found') || msg.includes('Target closed')) {

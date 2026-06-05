@@ -11,7 +11,7 @@ export const useSettingsStore = defineStore('settings', {
         closeBehavior: 'tray',
         apiPort: 12138,
         apiRunning: false,
-        watermarkStyle: 'enhanced',
+        watermarkStyle: 'none',
         userExtensions: [],
         currentDataPath: '',
         isDefaultDataPath: true,
@@ -32,7 +32,7 @@ export const useSettingsStore = defineStore('settings', {
                 this.enableApiServer = settings.enableApiServer || false;
                 this.closeBehavior = settings.closeBehavior === 'quit' ? 'quit' : 'tray';
                 this.apiPort = settings.apiPort || 12138;
-                this.watermarkStyle = settings.watermarkStyle || 'enhanced';
+                this.watermarkStyle = settings.watermarkStyle || 'none';
 
                 // Load API Status
                 try {
@@ -118,9 +118,10 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         async saveWatermarkStyle(style) {
-            this.watermarkStyle = style;
+            this.watermarkStyle = style || 'none';
             const settings = await ipcService.getSettings();
-            settings.watermarkStyle = style;
+            settings.watermarkStyle = this.watermarkStyle;
+            localStorage.setItem('geekez_watermark_style', this.watermarkStyle);
             await ipcService.saveSettings(settings);
         },
 

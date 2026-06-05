@@ -15,6 +15,7 @@
     <!-- Modals (Controlled by uiStore) -->
     <CreateProfileModal :class="{ active: uiStore.addModalVisible }" />
     <EditProfileModal :class="{ active: uiStore.editModalVisible }" />
+    <CopyProfileModal :class="{ active: uiStore.copyModalVisible }" />
 
     <!-- Other Modals (Legacy wrapper components) -->
     <ProxyModal />
@@ -42,6 +43,7 @@ import Toolbar from './components/Toolbar.vue';
 import ProfileList from './components/ProfileList.vue';
 import CreateProfileModal from './components/CreateProfileModal.vue';
 import EditProfileModal from './components/EditProfileModal.vue';
+import CopyProfileModal from './components/CopyProfileModal.vue';
 import ProxyModal from './components/ProxyModal.vue';
 import ExportModal from './components/ExportModal.vue';
 import ExportSelectModal from './components/ExportSelectModal.vue';

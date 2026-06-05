@@ -6,6 +6,7 @@ export const useUIStore = defineStore('ui', () => {
     // Modal visibility states
     const addModalVisible = ref(false);
     const editModalVisible = ref(false);
+    const copyModalVisible = ref(false);
     const proxyModalVisible = ref(false);
     const exportModalVisible = ref(false);
     const settingsModalVisible = ref(false);
@@ -52,6 +53,7 @@ export const useUIStore = defineStore('ui', () => {
 
     // Active ID for editing
     const currentEditId = ref(null);
+    const copyProfileIds = ref([]);
     const currentSubEdit = ref(null);
 
     // Actions
@@ -69,6 +71,21 @@ export const useUIStore = defineStore('ui', () => {
     const closeEditModal = () => {
         currentEditId.value = null;
         editModalVisible.value = false;
+    };
+
+    const openCopyModal = (ids) => {
+        const nextIds = Array.from(new Set(
+            (Array.isArray(ids) ? ids : [ids])
+                .map(id => String(id || '').trim())
+                .filter(Boolean)
+        ));
+        if (nextIds.length === 0) return;
+        copyProfileIds.value = nextIds;
+        copyModalVisible.value = true;
+    };
+    const closeCopyModal = () => {
+        copyProfileIds.value = [];
+        copyModalVisible.value = false;
     };
 
     const openExportModal = () => { exportModalVisible.value = true; };
@@ -164,6 +181,7 @@ export const useUIStore = defineStore('ui', () => {
     return {
         addModalVisible,
         editModalVisible,
+        copyModalVisible,
         proxyModalVisible,
         exportModalVisible,
         settingsModalVisible,
@@ -186,11 +204,14 @@ export const useUIStore = defineStore('ui', () => {
         inputModalTitle,
         inputModalValue,
         currentEditId,
+        copyProfileIds,
         currentSubEdit,
         openAddModal,
         closeAddModal,
         openEditModal,
         closeEditModal,
+        openCopyModal,
+        closeCopyModal,
         openExportModal,
         closeExportModal,
         openExportSelectModal,

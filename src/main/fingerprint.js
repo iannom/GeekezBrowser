@@ -53,6 +53,35 @@ const BROWSER_FULL_VERSION_BY_MAJOR = BROWSER_FULL_VERSION_POOL.reduce((acc, ver
     if (!acc[major].includes(version)) acc[major].push(version);
     return acc;
 }, {});
+const TIMEZONE_ALIASES = {
+    'America/Honolulu': 'Pacific/Honolulu',
+    'America/Atlanta': 'America/New_York',
+    'America/Boston': 'America/New_York',
+    'America/Miami': 'America/New_York',
+    'America/Philadelphia': 'America/New_York',
+    'America/Washington_DC': 'America/New_York',
+    'America/Austin': 'America/Chicago',
+    'America/Dallas': 'America/Chicago',
+    'America/Houston': 'America/Chicago',
+    'America/San_Antonio': 'America/Chicago',
+    'America/Las_Vegas': 'America/Los_Angeles',
+    'America/San_Diego': 'America/Los_Angeles',
+    'America/San_Francisco': 'America/Los_Angeles',
+    'America/San_Jose': 'America/Los_Angeles',
+    'America/Seattle': 'America/Los_Angeles',
+    'America/Salt_Lake_City': 'America/Denver',
+    'Europe/Birmingham': 'Europe/London',
+    'Europe/Manchester': 'Europe/London',
+    'Europe/Marseille': 'Europe/Paris',
+    'Europe/Barcelona': 'Europe/Madrid',
+    'Europe/Frankfurt': 'Europe/Berlin',
+    'Europe/Munich': 'Europe/Berlin',
+    'Europe/Milan': 'Europe/Rome',
+    'Asia/Beijing': 'Asia/Shanghai',
+    'Asia/Kyoto': 'Asia/Tokyo',
+    'Asia/Osaka': 'Asia/Tokyo',
+    'Asia/Mumbai': 'Asia/Kolkata'
+};
 
 const WEBGL_CATALOG = {
     windows: [
@@ -493,6 +522,26 @@ function asNumber(value) {
     return Number.isFinite(num) ? num : null;
 }
 
+function isSupportedTimezone(value) {
+    if (typeof value !== 'string' || !value.trim()) return false;
+    try {
+        new Intl.DateTimeFormat('en-US', { timeZone: value }).format(new Date());
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+function resolveTimezone(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return 'America/Los_Angeles';
+    if (raw === 'Auto' || raw === 'Auto (No Change)') return 'Auto';
+
+    const mapped = TIMEZONE_ALIASES[raw] || raw;
+    if (isSupportedTimezone(mapped)) return mapped;
+    return 'Auto';
+}
+
 function resolveRuntimePlatform(explicitPlatform) {
     if (explicitPlatform === 'Win32') return 'windows';
     if (explicitPlatform === 'MacIntel') return 'mac';
@@ -642,6 +691,13 @@ function resolveScreen(screen, width, height) {
     return { width: randomRes.w, height: randomRes.h };
 }
 
+function resolveViewport(screen) {
+    return {
+        width: screen.width,
+        height: Math.max(0, screen.height - 88)
+    };
+}
+
 function getWebglProfilesByRuntime(runtimePlatform) {
     if (runtimePlatform === 'windows') return WEBGL_CATALOG.windows;
     if (runtimePlatform === 'mac') return WEBGL_CATALOG.mac;
@@ -670,8 +726,7 @@ function resolveWebglProfile(runtimePlatform, requestedProfile, explicitWebgl) {
     }
 
     const runtimeCatalog = getWebglProfilesByRuntime(runtimePlatform);
-    const allCatalog = [...WEBGL_CATALOG.windows, ...WEBGL_CATALOG.mac, ...WEBGL_CATALOG.linux];
-    const exact = allCatalog.find(item => item.id === requestedProfile);
+    const exact = runtimeCatalog.find(item => item.id === requestedProfile);
     const selected = exact || getRandom(runtimeCatalog);
 
     return {
@@ -682,6 +737,24 @@ function resolveWebglProfile(runtimePlatform, requestedProfile, explicitWebgl) {
         unmaskedRenderer: selected.unmaskedRenderer,
         version: selected.version,
         shadingLanguageVersion: selected.shadingLanguageVersion
+    };
+}
+
+function buildUserAgentMetadata(defaultMetadata, customMetadata) {
+    void customMetadata;
+
+    return {
+        ...defaultMetadata,
+        brands: defaultMetadata.brands,
+        fullVersionList: defaultMetadata.fullVersionList,
+        mobile: false,
+        platform: defaultMetadata.platform,
+        platformVersion: defaultMetadata.platformVersion,
+        architecture: defaultMetadata.architecture,
+        bitness: defaultMetadata.bitness,
+        model: '',
+        wow64: false,
+        uaFullVersion: defaultMetadata.uaFullVersion
     };
 }
 
@@ -717,6 +790,7 @@ function generateFingerprint(options = {}) {
     };
 
     const screen = resolveScreen(options.screen, options.resW, options.resH);
+    const viewport = resolveViewport(screen);
     const hasLanguageOverride = typeof options.language === 'string' && options.language && options.language !== 'auto';
     const language = hasLanguageOverride ? options.language : 'auto';
     const languages = hasLanguageOverride ? normalizeLanguages(language, options.languages) : [];
@@ -725,10 +799,7 @@ function generateFingerprint(options = {}) {
     const tlsClientHello = resolveTlsClientHello(options.tlsClientHello, resolvedBrowserType, resolvedBrowserMajorVersion, uaMode);
     const userAgentMetadata = uaMode === 'none'
         ? null
-        : {
-            ...defaultUaMetadata,
-            ...(options.userAgentMetadata || {})
-        };
+        : buildUserAgentMetadata(defaultUaMetadata, options.userAgentMetadata);
     const userAgent = uaMode === 'none'
         ? null
         : (options.userAgent || buildUserAgent(resolvedBrowserType, resolvedBrowserFullVersion, platformValues.uaPlatformToken));
@@ -738,6 +809,7 @@ function generateFingerprint(options = {}) {
         platform: platformValues.navigatorPlatform,
         screen,
         window: { ...screen },
+        viewport,
         language,
         languages,
         hardwareConcurrency: asNumber(options.hardwareConcurrency) || getRandom([4, 8, 12, 16]),
@@ -750,7 +822,7 @@ function generateFingerprint(options = {}) {
         },
         audioNoise: typeof options.audioNoise === 'number' ? options.audioNoise : (Math.random() * 0.000001),
         noiseSeed: asNumber(options.noiseSeed) || randInt(1000, 9999999),
-        timezone: options.timezone || 'America/Los_Angeles',
+        timezone: resolveTimezone(options.timezone),
         city: options.city || null,
         geolocation: options.geolocation || null,
         browserType,
@@ -771,7 +843,7 @@ function getInjectScript(fp, profileName, watermarkStyle) {
     const normalizedFp = generateFingerprint(fp || {});
     const fpJson = JSON.stringify(normalizedFp);
     const safeProfileName = (profileName || 'Profile').replace(/[<>"'&]/g, '');
-    const style = watermarkStyle || 'enhanced';
+    const style = String(watermarkStyle || 'none').toLowerCase();
 
     return `
     (function() {
@@ -843,12 +915,30 @@ function getInjectScript(fp, profileName, watermarkStyle) {
             if (fp.screen && fp.screen.width && fp.screen.height) {
                 const screenWidth = fp.screen.width;
                 const screenHeight = fp.screen.height;
+                const viewport = fp.viewport || {
+                    width: screenWidth,
+                    height: Math.max(0, screenHeight - 88)
+                };
+                const viewportWidth = viewport.width || screenWidth;
+                const viewportHeight = viewport.height || Math.max(0, screenHeight - 88);
                 defineValueGetter(screen, 'width', screenWidth, 'get width');
                 defineValueGetter(screen, 'height', screenHeight, 'get height');
                 defineValueGetter(screen, 'availWidth', screenWidth, 'get availWidth');
                 defineValueGetter(screen, 'availHeight', Math.max(0, screenHeight - 40), 'get availHeight');
+                defineValueGetter(screen, 'availLeft', 0, 'get availLeft');
+                defineValueGetter(screen, 'availTop', 0, 'get availTop');
+                defineValueGetter(screen, 'colorDepth', 24, 'get colorDepth');
+                defineValueGetter(screen, 'pixelDepth', 24, 'get pixelDepth');
                 defineValueGetter(window, 'outerWidth', screenWidth, 'get outerWidth');
                 defineValueGetter(window, 'outerHeight', screenHeight, 'get outerHeight');
+                defineValueGetter(window, 'innerWidth', viewportWidth, 'get innerWidth');
+                defineValueGetter(window, 'innerHeight', viewportHeight, 'get innerHeight');
+                defineValueGetter(window, 'devicePixelRatio', 1, 'get devicePixelRatio');
+                if (window.visualViewport) {
+                    defineValueGetter(VisualViewport.prototype, 'width', viewportWidth, 'get width');
+                    defineValueGetter(VisualViewport.prototype, 'height', viewportHeight, 'get height');
+                    defineValueGetter(VisualViewport.prototype, 'scale', 1, 'get scale');
+                }
             }
 
             if (fp.hardwareConcurrency) {
@@ -877,7 +967,7 @@ function getInjectScript(fp, profileName, watermarkStyle) {
 
             if (enableUaSpoof) {
                 defineValueGetter(Navigator.prototype, 'userAgent', targetUa, 'get userAgent');
-                defineValueGetter(Navigator.prototype, 'appVersion', targetUa.replace(/^Mozilla\//, ''), 'get appVersion');
+                defineValueGetter(Navigator.prototype, 'appVersion', targetUa.replace(/^Mozilla\\//, ''), 'get appVersion');
                 defineValueGetter(Navigator.prototype, 'platform', targetPlatform, 'get platform');
                 defineValueGetter(Navigator.prototype, 'vendor', 'Google Inc.', 'get vendor');
 
@@ -925,28 +1015,45 @@ function getInjectScript(fp, profileName, watermarkStyle) {
                 const latitude = fp.geolocation.latitude;
                 const longitude = fp.geolocation.longitude;
                 const accuracy = fp.geolocation.accuracy || (500 + Math.floor(Math.random() * 1000));
+                const watchers = new Map();
 
-                const fakeGetCurrentPosition = function getCurrentPosition(success) {
-                    const position = {
-                        coords: {
-                            latitude: latitude + (Math.random() - 0.5) * 0.005,
-                            longitude: longitude + (Math.random() - 0.5) * 0.005,
-                            accuracy,
-                            altitude: null,
-                            altitudeAccuracy: null,
-                            heading: null,
-                            speed: null
-                        },
-                        timestamp: Date.now()
-                    };
+                const buildPosition = () => ({
+                    coords: {
+                        latitude: latitude + (Math.random() - 0.5) * 0.005,
+                        longitude: longitude + (Math.random() - 0.5) * 0.005,
+                        accuracy,
+                        altitude: null,
+                        altitudeAccuracy: null,
+                        heading: null,
+                        speed: null
+                    },
+                    timestamp: Date.now()
+                });
+
+                const fakeGetCurrentPosition = function getCurrentPosition(success, error) {
                     setTimeout(() => {
-                        if (typeof success === 'function') success(position);
+                        if (typeof success === 'function') {
+                            success(buildPosition());
+                        } else if (typeof error === 'function') {
+                            error({ code: 2, message: 'Position callback is not callable' });
+                        }
                     }, 12);
                 };
 
                 const fakeWatchPosition = function watchPosition(success) {
+                    const id = Math.floor(Math.random() * 10000) + 1;
                     fakeGetCurrentPosition(success);
-                    return Math.floor(Math.random() * 10000) + 1;
+                    const timer = setInterval(() => fakeGetCurrentPosition(success), 30000);
+                    watchers.set(id, timer);
+                    return id;
+                };
+
+                const fakeClearWatch = function clearWatch(id) {
+                    const timer = watchers.get(id);
+                    if (timer) {
+                        clearInterval(timer);
+                        watchers.delete(id);
+                    }
                 };
 
                 try {
@@ -960,6 +1067,24 @@ function getInjectScript(fp, profileName, watermarkStyle) {
                         configurable: true,
                         writable: true
                     });
+                    Object.defineProperty(Geolocation.prototype, 'clearWatch', {
+                        value: makeNative(fakeClearWatch, 'clearWatch'),
+                        configurable: true,
+                        writable: true
+                    });
+                } catch (e) { }
+
+                try {
+                    const permissionStatus = Object.freeze({ state: 'granted', onchange: null });
+                    const originalQuery = navigator.permissions && navigator.permissions.query;
+                    if (originalQuery) {
+                        navigator.permissions.query = makeNative(function query(permissionDesc) {
+                            if (permissionDesc && permissionDesc.name === 'geolocation') {
+                                return Promise.resolve(permissionStatus);
+                            }
+                            return originalQuery.apply(this, arguments);
+                        }, 'query');
+                    }
                 } catch (e) { }
             }
 
@@ -994,20 +1119,67 @@ function getInjectScript(fp, profileName, watermarkStyle) {
 
             // --- 6. Canvas and Audio noise ---
             try {
+                const clampPixel = (value) => Math.max(0, Math.min(255, value));
+                const adjustPixelBuffer = (buffer, stride = 53) => {
+                    if (!buffer || !fp.noiseSeed) return buffer;
+                    const noise = fp.canvasNoise || {};
+                    const r = Number(noise.r || 0);
+                    const g = Number(noise.g || 0);
+                    const b = Number(noise.b || 0);
+                    const a = Number(noise.a || 0);
+                    for (let i = 0; i < buffer.length; i += 4) {
+                        if ((i + fp.noiseSeed) % stride !== 0) continue;
+                        buffer[i] = clampPixel(buffer[i] + r);
+                        buffer[i + 1] = clampPixel(buffer[i + 1] + g);
+                        buffer[i + 2] = clampPixel(buffer[i + 2] + b);
+                        buffer[i + 3] = clampPixel(buffer[i + 3] + a);
+                    }
+                    return buffer;
+                };
+
                 const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
                 const hookedGetImageData = function getImageData(x, y, w, h) {
                     const imageData = originalGetImageData.apply(this, arguments);
-                    if (fp.noiseSeed) {
-                        for (let i = 0; i < imageData.data.length; i += 4) {
-                            if ((i + fp.noiseSeed) % 53 === 0) {
-                                const noise = fp.canvasNoise ? (fp.canvasNoise.a || 0) : 0;
-                                imageData.data[i + 3] = Math.max(0, Math.min(255, imageData.data[i + 3] + noise));
-                            }
-                        }
-                    }
+                    adjustPixelBuffer(imageData.data, 53);
                     return imageData;
                 };
                 CanvasRenderingContext2D.prototype.getImageData = makeNative(hookedGetImageData, 'getImageData');
+
+                const buildNoisyCanvas = (canvas) => {
+                    if (!canvas || !canvas.width || !canvas.height) return null;
+                    const clone = document.createElement('canvas');
+                    clone.width = canvas.width;
+                    clone.height = canvas.height;
+                    const context = clone.getContext('2d');
+                    if (!context) return null;
+                    context.drawImage(canvas, 0, 0);
+                    const imageData = originalGetImageData.call(context, 0, 0, clone.width, clone.height);
+                    adjustPixelBuffer(imageData.data, 53);
+                    context.putImageData(imageData, 0, 0);
+                    return clone;
+                };
+
+                if (window.HTMLCanvasElement && HTMLCanvasElement.prototype.toDataURL) {
+                    const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+                    HTMLCanvasElement.prototype.toDataURL = makeNative(function toDataURL() {
+                        try {
+                            const noisyCanvas = buildNoisyCanvas(this);
+                            if (noisyCanvas) return originalToDataURL.apply(noisyCanvas, arguments);
+                        } catch (e) { }
+                        return originalToDataURL.apply(this, arguments);
+                    }, 'toDataURL');
+                }
+
+                if (window.HTMLCanvasElement && HTMLCanvasElement.prototype.toBlob) {
+                    const originalToBlob = HTMLCanvasElement.prototype.toBlob;
+                    HTMLCanvasElement.prototype.toBlob = makeNative(function toBlob() {
+                        try {
+                            const noisyCanvas = buildNoisyCanvas(this);
+                            if (noisyCanvas) return originalToBlob.apply(noisyCanvas, arguments);
+                        } catch (e) { }
+                        return originalToBlob.apply(this, arguments);
+                    }, 'toBlob');
+                }
             } catch (e) { }
 
             try {
@@ -1086,6 +1258,22 @@ function getInjectScript(fp, profileName, watermarkStyle) {
                 if (Array.isArray(value)) return value.slice();
                 return value;
             };
+            const applyWebglReadPixelsNoise = (pixels) => {
+                if (!pixels || typeof pixels.length !== 'number' || !fp.noiseSeed) return;
+                const noise = fp.canvasNoise || {};
+                const r = Number(noise.r || 0);
+                const g = Number(noise.g || 0);
+                const b = Number(noise.b || 0);
+                const a = Number(noise.a || 0);
+                const clamp = (value) => Math.max(0, Math.min(255, value));
+                for (let i = 0; i < pixels.length; i += 4) {
+                    if ((i + fp.noiseSeed) % 97 !== 0) continue;
+                    pixels[i] = clamp(pixels[i] + r);
+                    pixels[i + 1] = clamp(pixels[i + 1] + g);
+                    pixels[i + 2] = clamp(pixels[i + 2] + b);
+                    pixels[i + 3] = clamp(pixels[i + 3] + a);
+                }
+            };
 
             const hookWebGLPrototype = (proto) => {
                 if (!proto || proto[PATCHED_WEBGL_PROTO_KEY]) return;
@@ -1093,6 +1281,7 @@ function getInjectScript(fp, profileName, watermarkStyle) {
                     const originalGetParameter = proto.getParameter;
                     const originalGetExtension = proto.getExtension;
                     const originalGetSupportedExtensions = proto.getSupportedExtensions;
+                    const originalReadPixels = proto.readPixels;
 
                     const hookedGetParameter = function getParameter(param) {
                         if (param === 37445) return webglInfo.unmaskedVendor || webglInfo.vendor || 'Google Inc.';
@@ -1122,6 +1311,13 @@ function getInjectScript(fp, profileName, watermarkStyle) {
                     proto.getExtension = makeNative(hookedGetExtension, 'getExtension');
                     if (originalGetSupportedExtensions) {
                         proto.getSupportedExtensions = makeNative(hookedGetSupportedExtensions, 'getSupportedExtensions');
+                    }
+                    if (originalReadPixels) {
+                        proto.readPixels = makeNative(function readPixels() {
+                            const result = originalReadPixels.apply(this, arguments);
+                            applyWebglReadPixelsNoise(arguments[6]);
+                            return result;
+                        }, 'readPixels');
                     }
                     Object.defineProperty(proto, PATCHED_WEBGL_PROTO_KEY, {
                         value: true,
@@ -1238,7 +1434,9 @@ function getInjectScript(fp, profileName, watermarkStyle) {
                         language: targetLanguage,
                         languages: targetLanguages,
                         platform: targetPlatform,
-                        webgl: webglInfo
+                        webgl: webglInfo,
+                        canvasNoise: fp.canvasNoise || {},
+                        noiseSeed: fp.noiseSeed || 1009
                     });
 
                     const workerPatch = function(workerPayload) {
@@ -1400,12 +1598,29 @@ function getInjectScript(fp, profileName, watermarkStyle) {
                                     if (Array.isArray(value)) return value.slice();
                                     return value;
                                 };
+                                const applyWorkerReadPixelsNoise = (pixels) => {
+                                    if (!pixels || typeof pixels.length !== 'number') return;
+                                    const seed = Number(workerPayload.noiseSeed) || 1009;
+                                    const noise = workerPayload.canvasNoise || {};
+                                    const r = Number(noise.r || 1);
+                                    const g = Number(noise.g || 1);
+                                    const b = Number(noise.b || 1);
+                                    const a = Number(noise.a || 0);
+                                    for (let i = 0; i < pixels.length; i += 4) {
+                                        if ((i + seed) % 97 !== 0) continue;
+                                        pixels[i] = Math.max(0, Math.min(255, pixels[i] + r));
+                                        pixels[i + 1] = Math.max(0, Math.min(255, pixels[i + 1] + g));
+                                        pixels[i + 2] = Math.max(0, Math.min(255, pixels[i + 2] + b));
+                                        pixels[i + 3] = Math.max(0, Math.min(255, pixels[i + 3] + a));
+                                    }
+                                };
                                 const hookProto = (proto) => {
                                     if (!proto || proto[patchKey]) return;
                                     try {
                                         const origGetParameter = proto.getParameter;
                                         const origGetExtension = proto.getExtension;
                                         const origGetSupportedExtensions = proto.getSupportedExtensions;
+                                        const origReadPixels = proto.readPixels;
                                         proto.getParameter = makeNative(function getParameter(param) {
                                             if (param === 37445) return workerWebgl.unmaskedVendor || workerWebgl.vendor || 'Google Inc.';
                                             if (param === 37446) return workerWebgl.unmaskedRenderer || workerWebgl.renderer || 'ANGLE (Unknown GPU)';
@@ -1428,6 +1643,13 @@ function getInjectScript(fp, profileName, watermarkStyle) {
                                                 }
                                                 return list;
                                             }, 'getSupportedExtensions');
+                                        }
+                                        if (origReadPixels) {
+                                            proto.readPixels = makeNative(function readPixels() {
+                                                const result = origReadPixels.apply(this, arguments);
+                                                applyWorkerReadPixelsNoise(arguments[6]);
+                                                return result;
+                                            }, 'readPixels');
                                         }
                                         Object.defineProperty(proto, patchKey, { value: true, configurable: true });
                                     } catch (e) { }
@@ -1533,6 +1755,70 @@ function getInjectScript(fp, profileName, watermarkStyle) {
             } catch (e) { }
             }
 
+            // --- 7.3 Service Worker isolation ---
+            // Service Worker 运行在页面注入脚本之外，可能暴露宿主 UA 和平台。
+            // 模拟环境内隐藏注册接口，避免页面查询未打补丁的 Worker。
+            try {
+                const makeServiceWorkerError = () => {
+                    try {
+                        return new DOMException('Service Worker is disabled in this profile', 'SecurityError');
+                    } catch (e) {
+                        const err = new Error('Service Worker is disabled in this profile');
+                        err.name = 'SecurityError';
+                        return err;
+                    }
+                };
+                const pendingReady = new Promise(() => {});
+                const addEventListener = makeNative(function addEventListener() {}, 'addEventListener');
+                const removeEventListener = makeNative(function removeEventListener() {}, 'removeEventListener');
+                const fakeContainer = {};
+
+                Object.defineProperties(fakeContainer, {
+                    controller: {
+                        get: makeNative(function() { return null; }, 'get controller'),
+                        configurable: true
+                    },
+                    ready: {
+                        get: makeNative(function() { return pendingReady; }, 'get ready'),
+                        configurable: true
+                    },
+                    oncontrollerchange: {
+                        get: makeNative(function() { return null; }, 'get oncontrollerchange'),
+                        set: makeNative(function() {}, 'set oncontrollerchange'),
+                        configurable: true
+                    },
+                    register: {
+                        value: makeNative(function register() {
+                            return Promise.reject(makeServiceWorkerError());
+                        }, 'register'),
+                        configurable: true
+                    },
+                    getRegistration: {
+                        value: makeNative(function getRegistration() {
+                            return Promise.resolve(undefined);
+                        }, 'getRegistration'),
+                        configurable: true
+                    },
+                    getRegistrations: {
+                        value: makeNative(function getRegistrations() {
+                            return Promise.resolve([]);
+                        }, 'getRegistrations'),
+                        configurable: true
+                    },
+                    addEventListener: { value: addEventListener, configurable: true },
+                    removeEventListener: { value: removeEventListener, configurable: true },
+                    dispatchEvent: {
+                        value: makeNative(function dispatchEvent() { return true; }, 'dispatchEvent'),
+                        configurable: true
+                    }
+                });
+
+                Object.defineProperty(Navigator.prototype, 'serviceWorker', {
+                    get: makeNative(function() { return fakeContainer; }, 'get serviceWorker'),
+                    configurable: true
+                });
+            } catch (e) { }
+
             // --- 8. WebRTC protection ---
             if (window.RTCPeerConnection) {
                 const OriginalRTCPeerConnection = window.RTCPeerConnection;
@@ -1550,6 +1836,7 @@ function getInjectScript(fp, profileName, watermarkStyle) {
 
             function createWatermark() {
                 try {
+                    if (['none', 'off', 'hidden', 'disabled'].includes(String(watermarkStyle || '').toLowerCase())) return;
                     if (document.getElementById('geekez-watermark')) return;
                     if (!document.body) {
                         setTimeout(createWatermark, 50);

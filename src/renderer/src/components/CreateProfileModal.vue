@@ -156,6 +156,42 @@ const allLanguages = window.LANGUAGE_DATA || [
   { name: 'English (US)', code: 'en-US' }
 ];
 
+const cityTimezoneAliases = {
+  'America/Honolulu': 'Pacific/Honolulu',
+  'America/Atlanta': 'America/New_York',
+  'America/Boston': 'America/New_York',
+  'America/Miami': 'America/New_York',
+  'America/Philadelphia': 'America/New_York',
+  'America/Washington_DC': 'America/New_York',
+  'America/Austin': 'America/Chicago',
+  'America/Dallas': 'America/Chicago',
+  'America/Houston': 'America/Chicago',
+  'America/San_Antonio': 'America/Chicago',
+  'America/Las_Vegas': 'America/Los_Angeles',
+  'America/San_Diego': 'America/Los_Angeles',
+  'America/San_Francisco': 'America/Los_Angeles',
+  'America/San_Jose': 'America/Los_Angeles',
+  'America/Seattle': 'America/Los_Angeles',
+  'America/Salt_Lake_City': 'America/Denver',
+  'Europe/Birmingham': 'Europe/London',
+  'Europe/Manchester': 'Europe/London',
+  'Europe/Marseille': 'Europe/Paris',
+  'Europe/Barcelona': 'Europe/Madrid',
+  'Europe/Frankfurt': 'Europe/Berlin',
+  'Europe/Munich': 'Europe/Berlin',
+  'Europe/Milan': 'Europe/Rome',
+  'Asia/Beijing': 'Asia/Shanghai',
+  'Asia/Kyoto': 'Asia/Tokyo',
+  'Asia/Osaka': 'Asia/Tokyo',
+  'Asia/Mumbai': 'Asia/Kolkata'
+};
+
+function resolveCityTimezone(city) {
+  const raw = city?.timezone || cityTimezoneAliases[city?.name] || city?.name;
+  if (!raw || raw === 'Auto (IP Based)') return 'Auto';
+  return allTimezones.includes(raw) ? raw : 'Auto';
+}
+
 const filteredTimezones = computed(() => {
   const s = timezoneSearch.value.toLowerCase();
   return allTimezones.filter(tz => tz.toLowerCase().includes(s)).slice(0, 50);
@@ -186,6 +222,11 @@ function selectCity(city) {
     form.city = city.name;
     form.geolocation = { latitude: city.lat, longitude: city.lng, accuracy: 100 };
     citySearch.value = city.name;
+    const timezone = resolveCityTimezone(city);
+    if (timezone !== 'Auto') {
+      form.timezone = timezone;
+      timezoneSearch.value = timezone;
+    }
   }
   showCityList.value = false;
 }

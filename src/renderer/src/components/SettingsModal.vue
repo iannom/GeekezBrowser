@@ -285,7 +285,26 @@
                         </p>
 
                         <div style="display:flex; flex-direction:column; gap:12px;">
-                            <!-- 方案5: 增强水印 (默认) -->
+                            <!-- 默认：不向网页 DOM 注入环境标识，降低被站点脚本识别的风险 -->
+                            <label :style="{ borderColor: settingsStore.watermarkStyle === 'none' ? 'var(--accent)' : 'var(--border)' }"
+                                style="display:flex; align-items:flex-start; gap:10px; padding:12px; border:1px solid; border-radius:6px; cursor:pointer; transition:0.2s;">
+                                <input type="radio" name="watermarkStyle" value="none"
+                                    style="margin-top:3px; width:auto; cursor:pointer;"
+                                    :checked="settingsStore.watermarkStyle === 'none'"
+                                    @change="settingsStore.saveWatermarkStyle('none')">
+                                <div style="flex:1;">
+                                    <div style="font-weight:bold; margin-bottom:5px; color:var(--text-primary);"
+                                        data-i18n="watermarkNoneLabel">
+                                        {{ $t('watermarkNoneLabel') }}
+                                    </div>
+                                    <div style="font-size:11px; color:var(--text-secondary); line-height:1.5;"
+                                        data-i18n="watermarkNoneDesc">
+                                        {{ $t('watermarkNoneDesc') }}
+                                    </div>
+                                </div>
+                            </label>
+
+                            <!-- 方案5: 增强水印 -->
                             <label :style="{ borderColor: settingsStore.watermarkStyle === 'enhanced' ? 'var(--accent)' : 'var(--border)' }"
                                 style="display:flex; align-items:flex-start; gap:10px; padding:12px; border:1px solid; border-radius:6px; cursor:pointer; transition:0.2s;">
                                 <input type="radio" name="watermarkStyle" value="enhanced"

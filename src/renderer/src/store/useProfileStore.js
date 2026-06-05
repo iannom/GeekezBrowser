@@ -100,6 +100,17 @@ export const useProfileStore = defineStore('profile', () => {
         }
     };
 
+    const copyProfiles = async (ids, mode) => {
+        try {
+            const result = await profileService.copyProfiles(ids, mode);
+            await loadProfiles();
+            return result;
+        } catch (e) {
+            console.error('Failed to copy profiles:', e);
+            throw e;
+        }
+    };
+
     const updateProfile = async (profile) => {
         try {
             await profileService.updateProfile(profile);
@@ -140,6 +151,7 @@ export const useProfileStore = defineStore('profile', () => {
         toggleSelectAllFiltered,
         isRunning,
         createProfile,
+        copyProfiles,
         updateProfile,
         deleteProfile
     };

@@ -9,7 +9,7 @@ const TIMEZONES = [
     "America/Phoenix",         // Arizona (no DST)
     "America/Los_Angeles",     // US Pacific
     "America/Anchorage",       // Alaska
-    "America/Honolulu",        // Hawaii
+    "Pacific/Honolulu",        // 夏威夷
     "America/Toronto",         // Canada Eastern
     "America/Vancouver",       // Canada Pacific
     "America/Edmonton",        // Canada Mountain
@@ -88,7 +88,7 @@ const TIMEZONES = [
     "Pacific/Auckland",        // New Zealand
     "Pacific/Fiji",
     "Pacific/Guam",
-    "Pacific/Honolulu",        // Hawaii (duplicate for clarity)
+    "Pacific/Honolulu",        // 夏威夷（保留重复项便于搜索）
 
     // --- Africa ---
     "Africa/Cairo",            // Egypt
@@ -107,20 +107,11 @@ const TIMEZONES = [
     "Asia/Qatar",              // Qatar
     "Asia/Muscat",             // Oman
 
-    // --- Additional US Cities ---
+    // --- 其他美国时区 ---
     "America/Detroit",         // Michigan
     "America/Indianapolis",    // Indiana
     "America/Louisville",      // Kentucky
-    "America/Atlanta",         // Georgia (same as New_York)
-    "America/Miami",           // Florida (same as New_York)
-    "America/Dallas",          // Texas (same as Chicago)
-    "America/Houston",         // Texas (same as Chicago)
-    "America/Seattle",         // Washington (same as Los_Angeles)
-    "America/San_Francisco",   // California (same as Los_Angeles)
-    "America/Las_Vegas",       // Nevada (same as Los_Angeles)
-    "America/Denver",          // Colorado
     "America/Boise",           // Idaho
-    "America/Salt_Lake_City",  // Utah
 ];
 
 // Export for both CommonJS and browser global

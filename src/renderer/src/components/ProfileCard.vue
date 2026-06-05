@@ -30,6 +30,7 @@
         <div class="actions">
             <button class="no-drag" @click="launch">{{ t('launch') }}</button>
             <button class="outline no-drag" @click="edit">{{ t('edit') }}</button>
+            <button class="outline no-drag" @click="copy">{{ t('copyProfile') }}</button>
             <button class="danger no-drag" @click="remove">{{ t('delete') }}</button>
         </div>
     </div>
@@ -110,6 +111,10 @@ const launch = async () => {
 
 const edit = () => {
     uiStore.openEditModal(props.profile.id);
+};
+
+const copy = () => {
+    uiStore.openCopyModal([props.profile.id]);
 };
 
 const remove = () => {

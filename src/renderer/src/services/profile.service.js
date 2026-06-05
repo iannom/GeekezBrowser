@@ -16,7 +16,8 @@ export const profileService = {
      */
     async launch(id) {
         try {
-            const watermarkStyle = localStorage.getItem('geekez_watermark_style') || 'enhanced';
+            const settings = await ipcService.getSettings().catch(() => ({}));
+            const watermarkStyle = settings?.watermarkStyle || localStorage.getItem('geekez_watermark_style') || 'none';
             const msg = await ipcService.invoke('launch-profile', id, watermarkStyle);
             return {
                 success: true,
@@ -45,6 +46,17 @@ export const profileService = {
      */
     async saveProfile(data) {
         return await ipcService.invoke('save-profile', data);
+    },
+
+    /**
+     * 复制一个或多个环境
+     */
+    async copyProfiles(ids = [], mode = 'profile') {
+        const payload = {
+            ids: Array.isArray(ids) ? ids : [ids],
+            mode
+        };
+        return await ipcService.invoke('copy-profiles', payload);
     },
 
     /**

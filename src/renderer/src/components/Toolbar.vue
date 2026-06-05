@@ -32,12 +32,15 @@
 
     <div class="sub-toolbar">
         <div class="sub-left">
-            <button @click="openAddModal" style="background:var(--accent);color:var(--bg-color);">+ {{ $t('newProfile') }}</button>
+            <button @click="openAddModal" style="background:var(--accent);color:var(--bg-color);">+ {{ t('newProfileBatch') }}</button>
             <button class="outline" @click="toggleSelectAllFiltered">
                 {{ allFilteredSelected ? t('unselectFiltered') : t('selectFiltered') }}
             </button>
             <button v-if="selectedCount > 0" class="outline" @click="handleBatchLaunch">
                 {{ `${t('batchLaunch')} (${selectedCount})` }}
+            </button>
+            <button v-if="selectedCount > 0" class="outline" @click="openBatchCopyModal">
+                {{ `${t('batchCopy')} (${selectedCount})` }}
             </button>
             <button v-if="selectedCount > 0" class="danger" @click="handleBatchDelete">
                 {{ `${t('batchDelete')} (${selectedCount})` }}
@@ -205,6 +208,10 @@ const handleBatchLaunch = async () => {
     } else {
         uiStore.showAlert(`${t('batchLaunch')} OK: ${results.length}`);
     }
+};
+
+const openBatchCopyModal = () => {
+    uiStore.openCopyModal([...profileStore.selectedIds]);
 };
 
 const handleBatchDelete = () => {

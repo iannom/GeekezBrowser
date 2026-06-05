@@ -434,7 +434,10 @@ function generateXrayConfig(mainProxyStr, localPort, preProxyConfig = null, prof
             applyUtlsFingerprint(preOutbound, utlsFingerprint);
             outbounds.push(preOutbound);
             mainOutbound.proxySettings = { tag: "proxy_pre" };
-        } catch (e) { }
+        } catch (e) {
+            const message = e && e.message ? e.message : String(e || 'unknown error');
+            throw new Error(`Pre-proxy configuration invalid: ${message}`);
+        }
     }
 
     outbounds.push(mainOutbound);
