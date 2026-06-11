@@ -105,7 +105,7 @@ test('User-Agent Client Hints 平台字段不能被旧数据覆盖', () => {
     ]);
 });
 
-test('Viewport 与 screen 分离，避免 CDP 与 JS hook 冲突', () => {
+test('Viewport 与 screen 分离，避免真实页面尺寸与 JS hook 冲突', () => {
     const fingerprint = generateFingerprint({
         screen: { width: 1366, height: 768 },
         uaMode: 'none'
@@ -267,17 +267,6 @@ test('真实 Chromium smoke：环境模拟覆盖实际运行时', {
     const session = await page.createCDPSession();
     await page.evaluateOnNewDocument(getInjectScript(fingerprint, 'Smoke Profile', 'none'));
     await session.send('Network.enable');
-    await session.send('Emulation.setDeviceMetricsOverride', {
-        width: fingerprint.viewport.width,
-        height: fingerprint.viewport.height,
-        deviceScaleFactor: 1,
-        mobile: false,
-        screenWidth: fingerprint.screen.width,
-        screenHeight: fingerprint.screen.height,
-        positionX: 0,
-        positionY: 0,
-        dontSetVisibleSize: false
-    });
     await session.send('Emulation.setHardwareConcurrencyOverride', {
         hardwareConcurrency: fingerprint.hardwareConcurrency
     });

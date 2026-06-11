@@ -158,16 +158,128 @@ let mainWindow = null; // Global reference for API-to-UI communication
 let appTray = null;
 let isAppQuitting = false;
 let cachedCloseBehavior = CLOSE_BEHAVIOR.TRAY;
+let cachedApiToken = null;
+let internalApiToken = crypto.randomBytes(32).toString('hex');
+
+function isObject(value) {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeProfileId(id) {
+    return String(id || '').trim();
+}
+
+function isValidProfileId(id) {
+    const value = normalizeProfileId(id);
+    return value.length > 0 && /^[A-Za-z0-9_-]+$/.test(value);
+}
+
+function ensureSafeChildPath(baseDir, ...segments) {
+    const resolvedBase = path.resolve(baseDir);
+    const target = path.resolve(resolvedBase, ...segments.map(segment => String(segment || '')));
+    const relative = path.relative(resolvedBase, target);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+        throw new Error('Resolved path is outside the allowed directory');
+    }
+    return target;
+}
+
+function ensureSafeOptionalChildPath(baseDir, ...segments) {
+    const resolvedBase = path.resolve(baseDir);
+    const target = path.resolve(resolvedBase, ...segments.map(segment => String(segment || '')));
+    const relative = path.relative(resolvedBase, target);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+        throw new Error('Resolved path is outside the allowed directory');
+    }
+    return target;
+}
+
+async function readProfilesSafe() {
+    if (!fs.existsSync(PROFILES_FILE)) return [];
+    const profiles = await fs.readJson(PROFILES_FILE);
+    return Array.isArray(profiles) ? profiles : [];
+}
+
+function getProfileById(profiles, id) {
+    const profileId = normalizeProfileId(id);
+    return Array.isArray(profiles) ? profiles.find(profile => profile && profile.id === profileId) : null;
+}
+
+function validatePasswordEntries(passwords) {
+    if (!Array.isArray(passwords)) {
+        throw new Error('passwords must be an array');
+    }
+    if (passwords.length > 5000) {
+        throw new Error('too many password entries');
+    }
+    for (const item of passwords) {
+        if (!isObject(item)) throw new Error('password entry must be an object');
+        const textFields = ['url', 'origin', 'username', 'password', 'name'];
+        for (const field of textFields) {
+            if (item[field] !== undefined && typeof item[field] !== 'string') {
+                throw new Error(`password entry field must be a string: ${field}`);
+            }
+        }
+    }
+}
+
+function getApiToken(settings = null) {
+    const source = settings || readSettingsSync();
+    if (source.apiToken && typeof source.apiToken === 'string') {
+        cachedApiToken = source.apiToken;
+        return source.apiToken;
+    }
+    if (!cachedApiToken) cachedApiToken = crypto.randomBytes(32).toString('hex');
+    return cachedApiToken;
+}
+
+async function ensureApiTokenPersisted() {
+    const settings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE).catch(() => ({})) : {};
+    if (settings.apiToken && typeof settings.apiToken === 'string') {
+        cachedApiToken = settings.apiToken;
+        return settings.apiToken;
+    }
+    const token = crypto.randomBytes(32).toString('hex');
+    cachedApiToken = token;
+    await saveSettingsWithNormalizedExtensions({ ...(settings || {}), apiToken: token });
+    return token;
+}
+
+function extractApiToken(req, url) {
+    const headerToken = req.headers['x-geekez-api-token'] || req.headers.authorization;
+    if (Array.isArray(headerToken)) return String(headerToken[0] || '').replace(/^Bearer\s+/i, '').trim();
+    if (headerToken) return String(headerToken).replace(/^Bearer\s+/i, '').trim();
+    return String(url.searchParams.get('token') || '').trim();
+}
+
+function timingSafeTokenEquals(a, b) {
+    if (!a || !b) return false;
+    const left = Buffer.from(String(a));
+    const right = Buffer.from(String(b));
+    return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function isSafeBackupFileName(fileName) {
+    const value = String(fileName || '');
+    return value.length > 0 &&
+        value.length <= 120 &&
+        !value.includes('/') &&
+        !value.includes('\\') &&
+        !value.includes('\0') &&
+        !value.includes('..');
+}
 
 // ============================================================================
 // REST API Server
 // ============================================================================
 function createApiServer(port) {
     const server = http.createServer(async (req, res) => {
-        // CORS headers
-        res.setHeader('Access-Control-Allow-Origin', '*');
+        const origin = req.headers.origin || '';
+        if (!origin || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) {
+            res.setHeader('Access-Control-Allow-Origin', origin || `http://127.0.0.1:${port}`);
+        }
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-GeekEZ-API-Token');
         res.setHeader('Content-Type', 'application/json');
 
         if (req.method === 'OPTIONS') {
@@ -179,6 +291,13 @@ function createApiServer(port) {
         const url = new URL(req.url, `http://localhost:${port}`);
         const pathname = url.pathname;
         const method = req.method;
+        const expectedToken = getApiToken();
+        const providedToken = extractApiToken(req, url);
+        if (!timingSafeTokenEquals(providedToken, expectedToken)) {
+            res.writeHead(401);
+            res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
+            return;
+        }
 
         // Parse body for POST/PUT
         let body = '';
@@ -210,9 +329,12 @@ const INTERNAL_API_PORT = 12139;
 
 function createInternalApiServer() {
     const server = http.createServer(async (req, res) => {
-        res.setHeader('Access-Control-Allow-Origin', '*');
+        const origin = req.headers.origin || '';
+        if (!origin || /^chrome-extension:\/\//i.test(origin)) {
+            res.setHeader('Access-Control-Allow-Origin', origin || 'chrome-extension://geekez-guard');
+        }
         res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-GeekEZ-Internal-Token');
         res.setHeader('Content-Type', 'application/json');
 
         if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
@@ -224,12 +346,23 @@ function createInternalApiServer() {
                 let data = ''; req.on('data', chunk => data += chunk); req.on('end', () => resolve(data));
             });
             try {
+                const providedToken = String(req.headers['x-geekez-internal-token'] || '').trim();
+                if (!timingSafeTokenEquals(providedToken, internalApiToken)) {
+                    res.writeHead(401); return res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
+                }
                 const data = JSON.parse(body);
                 if (!data.profileId || !data.passwords) {
                     res.writeHead(400); return res.end(JSON.stringify({ success: false, error: 'profileId and passwords required' }));
                 }
-                const pwFile = require('path').join(DATA_PATH, data.profileId, 'passwords.json');
-                await require('fs-extra').ensureDir(require('path').dirname(pwFile));
+                const profiles = await readProfilesSafe();
+                const profile = getProfileById(profiles, data.profileId);
+                if (!profile) {
+                    res.writeHead(404); return res.end(JSON.stringify({ success: false, error: 'Profile not found' }));
+                }
+                validatePasswordEntries(data.passwords);
+                const profileDir = ensureSafeChildPath(DATA_PATH, profile.id);
+                const pwFile = ensureSafeChildPath(profileDir, 'passwords.json');
+                await fs.ensureDir(path.dirname(pwFile));
                 await writeEncryptedPasswords(pwFile, data.passwords, data.profileId);
                 res.writeHead(200); res.end(JSON.stringify({ success: true, count: data.passwords.length }));
             } catch (err) {
@@ -920,6 +1053,9 @@ function normalizeSettingsSnapshot(settings) {
     nextSettings.userExtensions = normalizeUserExtensions(nextSettings.userExtensions || []);
     nextSettings.closeBehavior = normalizeCloseBehavior(nextSettings.closeBehavior);
     nextSettings.watermarkStyle = normalizeWatermarkStyle(nextSettings.watermarkStyle);
+    if (nextSettings.apiToken !== undefined && typeof nextSettings.apiToken !== 'string') {
+        delete nextSettings.apiToken;
+    }
     return nextSettings;
 }
 
@@ -1160,37 +1296,6 @@ function normalizeWatermarkStyle(style) {
     const normalized = String(style || 'none').trim().toLowerCase();
     if (['enhanced', 'banner'].includes(normalized)) return normalized;
     return 'none';
-}
-
-function buildDeviceMetricsOverride(fingerprint = {}) {
-    const screenWidth = Number(fingerprint.screen?.width || fingerprint.window?.width);
-    const screenHeight = Number(fingerprint.screen?.height || fingerprint.window?.height);
-    if (!Number.isFinite(screenWidth) || !Number.isFinite(screenHeight) || screenWidth <= 0 || screenHeight <= 0) {
-        return null;
-    }
-
-    const normalizedScreenWidth = Math.floor(screenWidth);
-    const normalizedScreenHeight = Math.floor(screenHeight);
-    const viewportWidth = Number(fingerprint.viewport?.width);
-    const viewportHeight = Number(fingerprint.viewport?.height);
-    const normalizedViewportWidth = Number.isFinite(viewportWidth) && viewportWidth > 0
-        ? Math.floor(viewportWidth)
-        : normalizedScreenWidth;
-    const normalizedViewportHeight = Number.isFinite(viewportHeight) && viewportHeight > 0
-        ? Math.floor(viewportHeight)
-        : Math.max(0, normalizedScreenHeight - 88);
-
-    return {
-        width: normalizedViewportWidth,
-        height: normalizedViewportHeight,
-        deviceScaleFactor: 1,
-        mobile: false,
-        screenWidth: normalizedScreenWidth,
-        screenHeight: normalizedScreenHeight,
-        positionX: 0,
-        positionY: 0,
-        dontSetVisibleSize: false
-    };
 }
 
 function normalizeGeolocationOverride(geolocation) {
@@ -1487,6 +1592,154 @@ async function copyProfilesByIds(payload = {}) {
     };
 }
 
+async function updateProfilesBatchByItems(items = []) {
+    if (!Array.isArray(items)) {
+        throw new Error('批量更新参数必须是数组');
+    }
+
+    const profiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
+    if (!Array.isArray(profiles)) {
+        throw new Error('profiles.json 格式无效');
+    }
+
+    const settings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : {};
+    const nextProfiles = [...profiles];
+    const results = [];
+
+    for (const item of items) {
+        const id = String(item?.id || '').trim();
+        if (!id) {
+            results.push({ id, success: false, message: '环境 ID 不能为空' });
+            continue;
+        }
+
+        const index = nextProfiles.findIndex(profile => profile.id === id);
+        if (index === -1) {
+            results.push({ id, success: false, message: '环境不存在' });
+            continue;
+        }
+
+        try {
+            const others = nextProfiles.filter((_, i) => i !== index);
+            nextProfiles[index] = await buildProfileFromInput(item, others, settings, nextProfiles[index]);
+            results.push({ id, success: true, profile: nextProfiles[index] });
+        } catch (err) {
+            results.push({ id, success: false, message: err.message || '更新失败' });
+        }
+    }
+
+    const successCount = results.filter(item => item.success).length;
+    if (successCount > 0) {
+        await fs.writeJson(PROFILES_FILE, nextProfiles);
+        notifyUIRefresh();
+    }
+
+    return {
+        success: results.every(item => item.success),
+        updated: successCount,
+        failed: results.length - successCount,
+        results
+    };
+}
+
+async function deleteProfileById(profileIdRaw) {
+    const profileId = normalizeProfileId(profileIdRaw);
+    if (!isValidProfileId(profileId)) {
+        throw new Error('Invalid profile id');
+    }
+
+    let profiles = await readProfilesSafe();
+    const profile = getProfileById(profiles, profileId);
+    if (!profile) {
+        throw new Error('Profile not found');
+    }
+
+    if (activeProcesses[profileId]) {
+        await stopRunningProfile(profileId, { refreshMenu: false });
+        await new Promise(r => setTimeout(r, 1000));
+    }
+
+    const profileDir = ensureSafeChildPath(DATA_PATH, profileId);
+    const trashDest = ensureSafeChildPath(TRASH_PATH, `${profileId}_${Date.now()}`);
+
+    profiles = profiles.filter(p => p.id !== profileId);
+    await fs.writeJson(PROFILES_FILE, profiles);
+    notifyUIRefresh();
+
+    let deleted = false;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            if (fs.existsSync(profileDir)) {
+                await fs.remove(profileDir);
+                console.log(`Deleted profile folder: ${profileDir}`);
+            }
+            deleted = true;
+            break;
+        } catch (err) {
+            console.error(`Delete attempt ${attempt} failed:`, err.message);
+            if (attempt < 3) {
+                await new Promise(r => setTimeout(r, 500 * attempt));
+            }
+        }
+    }
+
+    if (!deleted && fs.existsSync(profileDir)) {
+        console.warn(`Failed to delete, moving to trash: ${profileDir}`);
+        try {
+            await fs.move(profileDir, trashDest);
+            console.log(`Moved to trash: ${trashDest}`);
+            deleted = true;
+        } catch (err) {
+            console.error('Failed to move to trash:', err);
+        }
+    }
+
+    if (!deleted && fs.existsSync(profileDir)) {
+        throw new Error('Profile metadata was removed but profile directory cleanup failed');
+    }
+
+    return { success: true, id: profileId };
+}
+
+async function reorderProfilesByIds(ids = []) {
+    if (!Array.isArray(ids)) {
+        throw new Error('排序参数必须是数组');
+    }
+
+    const profiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
+    if (!Array.isArray(profiles)) {
+        throw new Error('profiles.json 格式无效');
+    }
+
+    const normalizedIds = ids.map(id => String(id || '').trim()).filter(Boolean);
+    const orderedUniqueIds = Array.from(new Set(normalizedIds));
+    if (orderedUniqueIds.length !== normalizedIds.length) {
+        throw new Error('排序参数包含重复环境 ID');
+    }
+    if (orderedUniqueIds.length !== profiles.length) {
+        throw new Error('排序参数数量与环境数量不一致');
+    }
+
+    const profileMap = new Map(profiles.map(profile => [profile.id, profile]));
+    const unknownId = orderedUniqueIds.find(id => !profileMap.has(id));
+    if (unknownId) {
+        throw new Error(`排序参数包含未知环境 ID: ${unknownId}`);
+    }
+
+    const orderedProfiles = orderedUniqueIds
+        .map(id => profileMap.get(id))
+        .filter(profile => !!profile);
+    const nextProfiles = orderedProfiles;
+
+    if (nextProfiles.length !== profiles.length) {
+        throw new Error('排序结果数量不一致');
+    }
+
+    await fs.writeJson(PROFILES_FILE, nextProfiles);
+    notifyUIRefresh();
+    return true;
+}
+
 // --- Chrome 密码解密辅助函数 ---
 // 解密 Chrome 主密钥 (平台相关)
 async function handleApiRequest(method, pathname, body, params) {
@@ -1566,9 +1819,7 @@ async function handleApiRequest(method, pathname, body, params) {
     if (method === 'DELETE' && profileMatch) {
         const profile = findProfile(decodeURIComponent(profileMatch[1]));
         if (!profile) return { status: 404, data: { success: false, error: 'Profile not found' } };
-        profiles = profiles.filter(p => p.id !== profile.id);
-        await fs.writeJson(PROFILES_FILE, profiles);
-        notifyUIRefresh(); // Notify UI to refresh
+        await deleteProfileById(profile.id);
         return { success: true, message: 'Profile deleted' };
     }
 
@@ -1724,7 +1975,7 @@ async function handleApiRequest(method, pathname, body, params) {
                 if (Array.isArray(yamlData)) {
                     let imported = 0;
                     for (const item of yamlData) {
-                        const name = generateUniqueName(item.name || `Imported-${Date.now()}`);
+                        const name = buildUniqueProfileName(profiles, item.name || `Imported-${Date.now()}`);
                         const newProfile = {
                             id: uuidv4(),
                             name,
@@ -1740,7 +1991,11 @@ async function handleApiRequest(method, pathname, body, params) {
                     notifyUIRefresh(); // Notify UI to refresh
                     return { success: true, message: `Imported ${imported} profiles from YAML`, count: imported };
                 }
-            } catch (yamlErr) { }
+            } catch (yamlErr) {
+                if (!password) {
+                    return { status: 400, data: { success: false, error: `Invalid YAML: ${yamlErr.message}` } };
+                }
+            }
 
             // Try encrypted backup
             if (!password) return { status: 400, data: { success: false, error: 'Password required for encrypted backup' } };
@@ -1753,7 +2008,7 @@ async function handleApiRequest(method, pathname, body, params) {
 
                 let imported = 0;
                 for (const profile of backupData.profiles || []) {
-                    const name = generateUniqueName(profile.name);
+                    const name = buildUniqueProfileName(profiles, profile.name);
                     const newProfile = { ...profile, id: uuidv4(), name };
                     profiles.push(newProfile);
                     imported++;
@@ -1778,6 +2033,7 @@ ipcMain.handle('start-api-server', async (e, { port }) => {
         return { success: false, error: 'API server already running' };
     }
     try {
+        const token = await ensureApiTokenPersisted();
         apiServer = createApiServer(port);
         await new Promise((resolve, reject) => {
             apiServer.listen(port, '127.0.0.1', () => resolve());
@@ -1785,7 +2041,7 @@ ipcMain.handle('start-api-server', async (e, { port }) => {
         });
         apiServerRunning = true;
         console.log(`🔌 API Server started on http://localhost:${port}`);
-        return { success: true, port };
+        return { success: true, port, token };
     } catch (err) {
         return { success: false, error: err.message };
     }
@@ -1938,8 +2194,11 @@ async function readAllProfilesSafe() {
     return Array.isArray(profiles) ? profiles : [];
 }
 
-function quitApplication() {
+async function quitApplication() {
     isAppQuitting = true;
+    await stopAllRunningProfiles({ refreshMenu: false }).catch((err) => {
+        console.error('Failed to stop profiles before quit:', err);
+    });
     app.quit();
 }
 
@@ -1973,7 +2232,8 @@ async function stopRunningProfile(profileId, options = {}) {
     return true;
 }
 
-async function stopAllRunningProfilesFromTray() {
+async function stopAllRunningProfiles(options = {}) {
+    const { refreshMenu = true } = options;
     const runningIds = Object.keys(activeProcesses);
     if (runningIds.length === 0) return;
 
@@ -1981,7 +2241,13 @@ async function stopAllRunningProfilesFromTray() {
         // eslint-disable-next-line no-await-in-loop
         await stopRunningProfile(profileId, { refreshMenu: false });
     }
-    await refreshTrayMenu();
+    if (refreshMenu) {
+        await refreshTrayMenu();
+    }
+}
+
+async function stopAllRunningProfilesFromTray() {
+    await stopAllRunningProfiles({ refreshMenu: true });
 }
 
 async function confirmStopAllRunningProfilesFromTray() {
@@ -2300,6 +2566,7 @@ async function generateExtension(profilePath, fingerprint, profileName, watermar
 
     // 内部扩展固定使用独立端口 12139
     const apiPort = 12139;
+    const syncToken = internalApiToken;
 
     const manifest = {
         manifest_version: 3,
@@ -2340,6 +2607,7 @@ async function generateExtension(profilePath, fingerprint, profileName, watermar
     const backgroundJs = `
 const PROFILE_ID = ${JSON.stringify(profileId || '')};
 const API_PORT = ${apiPort};
+const SYNC_TOKEN = ${JSON.stringify(syncToken)};
 const INIT_PASSWORDS = ${JSON.stringify(passwords)};
 
 // 初始化密码数据
@@ -2385,7 +2653,7 @@ async function deletePassword(origin, username) {
 function syncToElectron(passwords) {
     fetch(\`http://127.0.0.1:\${API_PORT}/api/passwords/sync\`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-GeekEZ-Internal-Token': SYNC_TOKEN },
         body: JSON.stringify({ profileId: PROFILE_ID, passwords })
     }).then(r => r.json())
       .then(res => console.log('Sync to Electron success:', res))
@@ -2727,6 +2995,7 @@ app.whenReady().then(async () => {
             const settings = await fs.readJson(SETTINGS_FILE);
             if (settings.enableApiServer && !apiServerRunning) {
                 const port = settings.apiPort || 12138;
+                await ensureApiTokenPersisted();
                 apiServer = createApiServer(port);
                 apiServer.listen(port, '127.0.0.1', () => {
                     apiServerRunning = true;
@@ -2996,10 +3265,26 @@ ipcMain.handle('download-xray-update', async (e, url) => {
     const zipPath = path.join(tempDir, 'xray.zip');
     try {
         fs.mkdirSync(tempDir, { recursive: true });
-        await downloadFile(url, zipPath);
-        if (process.platform === 'win32') await new Promise((resolve) => exec('taskkill /F /IM xray.exe', () => resolve()));
-        activeProcesses = {};
-        await new Promise(r => setTimeout(r, 3000));
+        const latest = await fetchJson('https://api.github.com/repos/XTLS/Xray-core/releases/latest');
+        if (!latest || !latest.tag_name) {
+            throw new Error('Failed to resolve latest Xray release');
+        }
+        const assetName = resolveXrayAssetName({ platform: os.platform(), arch: os.arch() });
+        if (!assetName) {
+            throw new Error(`Unsupported platform/arch: ${os.platform()}-${os.arch()}`);
+        }
+        const asset = Array.isArray(latest.assets)
+            ? latest.assets.find(item => item && item.name === assetName)
+            : null;
+        const officialUrl = asset?.browser_download_url || `https://github.com/XTLS/Xray-core/releases/download/${latest.tag_name}/${assetName}`;
+        const allowedProxyUrl = `https://gh-proxy.com/${officialUrl}`;
+        const requestedUrl = String(url || '').trim();
+        if (requestedUrl && requestedUrl !== officialUrl && requestedUrl !== allowedProxyUrl) {
+            throw new Error('Untrusted Xray download URL');
+        }
+        await downloadFile(requestedUrl || officialUrl, zipPath);
+        await stopAllRunningProfiles({ refreshMenu: true }).catch(() => { });
+        await new Promise(r => setTimeout(r, 500));
         const extractDir = path.join(tempDir, 'extracted');
         fs.mkdirSync(extractDir, { recursive: true });
         await extractZip(zipPath, extractDir);
@@ -3087,6 +3372,12 @@ ipcMain.handle('update-profile', async (event, updatedProfile) => {
     notifyUIRefresh();
     return true;
 });
+ipcMain.handle('update-profiles-batch', async (event, items) => {
+    return await updateProfilesBatchByItems(items || []);
+});
+ipcMain.handle('reorder-profiles', async (event, ids) => {
+    return await reorderProfilesByIds(ids || []);
+});
 ipcMain.handle('save-profile', async (event, data) => {
     const profiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
     const settings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : {};
@@ -3100,62 +3391,11 @@ ipcMain.handle('copy-profiles', async (event, payload) => {
     return await copyProfilesByIds(payload || {});
 });
 ipcMain.handle('delete-profile', async (event, id) => {
-    // 关闭正在运行的进程
-    if (activeProcesses[id]) {
-        await stopRunningProfile(id, { refreshMenu: false });
-        // Windows 需要更长的等待时间让文件释放
-        await new Promise(r => setTimeout(r, 1000));
-    }
-
-    // 从 profiles.json 中删除
-    let profiles = await fs.readJson(PROFILES_FILE);
-    profiles = profiles.filter(p => p.id !== id);
-    await fs.writeJson(PROFILES_FILE, profiles);
-    notifyUIRefresh();
-
-    // 永久删除 profile 文件夹（带重试机制）
-    const profileDir = path.join(DATA_PATH, id);
-    let deleted = false;
-
-    // 尝试删除 3 次
-    for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-            if (fs.existsSync(profileDir)) {
-                // 使用 fs-extra 的 remove，它会递归删除
-                await fs.remove(profileDir);
-                console.log(`Deleted profile folder: ${profileDir}`);
-                deleted = true;
-                break;
-            } else {
-                deleted = true;
-                break;
-            }
-        } catch (err) {
-            console.error(`Delete attempt ${attempt} failed:`, err.message);
-            if (attempt < 3) {
-                // 等待后重试
-                await new Promise(r => setTimeout(r, 500 * attempt));
-            }
-        }
-    }
-
-    // 如果删除失败，移到回收站作为后备方案
-    if (!deleted && fs.existsSync(profileDir)) {
-        console.warn(`Failed to delete, moving to trash: ${profileDir}`);
-        const trashDest = path.join(TRASH_PATH, `${id}_${Date.now()}`);
-        try {
-            await fs.move(profileDir, trashDest);
-            console.log(`Moved to trash: ${trashDest}`);
-        } catch (err) {
-            console.error(`Failed to move to trash:`, err);
-        }
-    }
-
-    return true;
+    return await deleteProfileById(id);
 });
 ipcMain.handle('get-settings', async () => {
     if (!fs.existsSync(SETTINGS_FILE)) {
-        return {
+        const defaults = {
             preProxies: [],
             mode: 'single',
             enablePreProxy: false,
@@ -3163,11 +3403,15 @@ ipcMain.handle('get-settings', async () => {
             enableUaWebglModify: false,
             closeBehavior: CLOSE_BEHAVIOR.TRAY,
             watermarkStyle: 'none',
-            userExtensions: []
+            userExtensions: [],
+            apiToken: getApiToken()
         };
+        return defaults;
     }
     const settings = await fs.readJson(SETTINGS_FILE);
-    return normalizeSettingsSnapshot(settings);
+    const normalized = normalizeSettingsSnapshot(settings);
+    normalized.apiToken = getApiToken(normalized);
+    return normalized;
 });
 ipcMain.handle('save-settings', async (e, settings) => {
     const incoming = (settings && typeof settings === 'object')
@@ -3379,10 +3623,12 @@ ipcMain.handle('open-url', async (e, url) => { await shell.openExternal(url); })
 
 // --- 自定义数据目录 ---
 ipcMain.handle('get-data-path-info', async () => {
+    const isDefault = DATA_PATH === DEFAULT_DATA_PATH;
     return {
         currentPath: DATA_PATH,
         defaultPath: DEFAULT_DATA_PATH,
-        isCustom: DATA_PATH !== DEFAULT_DATA_PATH
+        isCustom: !isDefault,
+        isDefault
     };
 });
 
@@ -3415,6 +3661,9 @@ ipcMain.handle('set-data-directory', async (e, { newPath, migrate }) => {
 
         // 如果需要迁移数据
         if (migrate && DATA_PATH !== newPath) {
+            if (Object.keys(activeProcesses).length > 0) {
+                return { success: false, error: 'Stop all running profiles before migrating data directory' };
+            }
             const oldProfiles = path.join(DATA_PATH, 'profiles.json');
             const oldSettings = path.join(DATA_PATH, 'settings.json');
 
@@ -3430,8 +3679,9 @@ ipcMain.handle('set-data-directory', async (e, { newPath, migrate }) => {
             // 迁移所有环境数据目录
             const profiles = fs.existsSync(oldProfiles) ? await fs.readJson(oldProfiles) : [];
             for (const profile of profiles) {
-                const oldDir = path.join(DATA_PATH, profile.id);
-                const newDir = path.join(newPath, profile.id);
+                if (!isValidProfileId(profile?.id)) continue;
+                const oldDir = ensureSafeChildPath(DATA_PATH, profile.id);
+                const newDir = ensureSafeChildPath(newPath, profile.id);
                 if (fs.existsSync(oldDir)) {
                     console.log(`Migrating profile ${profile.id}...`);
                     await fs.copy(oldDir, newDir);
@@ -3782,12 +4032,20 @@ ipcMain.handle('import-full-backup', async (e, { filePath, password }) => {
         if (backupData.version !== 1 && backupData.version !== 2) {
             throw new Error(`不支持的备份版本: ${backupData.version}`);
         }
+        if (!Array.isArray(backupData.profiles)) {
+            throw new Error('Invalid backup: profiles must be an array');
+        }
 
         // 还原 profiles
         currentImportProgress = { percent: 40, message: 'Restoring Profiles...', processing: true };
         const currentProfiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
         let importedCount = 0;
+        const allowedProfileIds = new Set();
         for (const profile of backupData.profiles) {
+            if (!isValidProfileId(profile?.id)) {
+                throw new Error(`Invalid profile id in backup: ${profile?.id || ''}`);
+            }
+            allowedProfileIds.add(profile.id);
             const idx = currentProfiles.findIndex(cp => cp.id === profile.id);
             if (idx > -1) { currentProfiles[idx] = profile; } else { currentProfiles.push(profile); }
             importedCount++;
@@ -3818,12 +4076,19 @@ ipcMain.handle('import-full-backup', async (e, { filePath, password }) => {
         let profileIndex = 0;
 
         for (const profileId of profileIds) {
+            if (!allowedProfileIds.has(profileId) || !isValidProfileId(profileId)) {
+                throw new Error(`Invalid browserData profile id in backup: ${profileId}`);
+            }
             profileIndex++;
             const browserFiles = backupData.browserData[profileId];
+            if (!browserFiles || typeof browserFiles !== 'object' || Array.isArray(browserFiles)) {
+                throw new Error(`Invalid browser data for profile: ${profileId}`);
+            }
             currentImportProgress = { percent: 60 + Math.floor((profileIndex / profileIds.length) * 30), message: `Restoring Browser (${profileIndex}/${profileIds.length})...`, processing: true };
             
-            const profileDataDir = path.join(DATA_PATH, profileId, 'browser_data');
-            const defaultDir = path.join(profileDataDir, 'Default');
+            const profileDir = ensureSafeChildPath(DATA_PATH, profileId);
+            const profileDataDir = ensureSafeChildPath(profileDir, 'browser_data');
+            const defaultDir = ensureSafeChildPath(profileDataDir, 'Default');
             await fs.ensureDir(defaultDir);
 
             // 1. 还原文件拷贝数据 (书签、历史记录等)
@@ -3831,15 +4096,11 @@ ipcMain.handle('import-full-backup', async (e, { filePath, password }) => {
                 if (fileName.startsWith('_')) continue; // 跳过 _cookies, _passwords
                 if (typeof content !== 'string') continue;
                 try {
-                    // v2: 直接文件名 → Default/ 下
-                    // v1 兼容: 带路径的文件名
-                    if (fileName.includes('/') || fileName.includes('\\')) {
-                        const targetPath = path.join(profileDataDir, fileName);
-                        await fs.ensureDir(path.dirname(targetPath));
-                        await fs.writeFile(targetPath, Buffer.from(content, 'base64'));
-                    } else {
-                        await fs.writeFile(path.join(defaultDir, fileName), Buffer.from(content, 'base64'));
+                    if (!isSafeBackupFileName(fileName)) {
+                        throw new Error(`Unsafe backup file name: ${fileName}`);
                     }
+                    const targetPath = ensureSafeChildPath(defaultDir, fileName);
+                    await fs.writeFile(targetPath, Buffer.from(content, 'base64'));
                 } catch (err) {
                     console.error(`还原文件失败 ${fileName}:`, err.message);
                 }
@@ -3887,7 +4148,8 @@ ipcMain.handle('import-full-backup', async (e, { filePath, password }) => {
             // 3. v2 格式: 密码写入 passwords.json (加密)
             if (hasPasswords) {
                 try {
-                    const pwFile = path.join(DATA_PATH, profileId, 'passwords.json');
+                    const pwFile = ensureSafeChildPath(profileDir, 'passwords.json');
+                    validatePasswordEntries(browserFiles._passwords);
                     await writeEncryptedPasswords(pwFile, browserFiles._passwords, profileId);
                     console.log(`已恢复 ${browserFiles._passwords.length} 个密码到 passwords.json (${profileId})`);
                 } catch (err) {
@@ -3896,9 +4158,11 @@ ipcMain.handle('import-full-backup', async (e, { filePath, password }) => {
             }
         }
 
+        currentImportProgress = { percent: 100, message: 'Finish!', processing: false };
         return { success: true, count: importedCount };
     } catch (err) {
         console.error('Import full backup failed:', err);
+        currentImportProgress = { percent: currentImportProgress.percent || 0, message: err.message || 'Import failed', processing: false };
         if (err.message.includes('Unsupported state') || err.message.includes('bad decrypt')) {
             return { success: false, error: '密码错误或文件已损坏' };
         }
@@ -4022,12 +4286,10 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
                 }
                 return "环境已唤醒";
             } catch (e) {
-                await forceKill(proc.xrayPid);
-                delete activeProcesses[profileId];
+                await stopRunningProfile(profileId, { refreshMenu: false });
             }
         } else {
-            await forceKill(proc.xrayPid);
-            delete activeProcesses[profileId];
+            await stopRunningProfile(profileId, { refreshMenu: false });
         }
         if (activeProcesses[profileId]) return "环境已唤醒";
     }
@@ -4123,9 +4385,23 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
             fs.writeJsonSync(xrayConfigPath, config);
             logFd = fs.openSync(xrayLogPath, 'a');
             xrayProcess = spawn(BIN_PATH, ['-c', xrayConfigPath], { cwd: BIN_DIR, env: { ...process.env, 'XRAY_LOCATION_ASSET': RESOURCES_BIN }, stdio: ['ignore', logFd, logFd], windowsHide: true });
-
-            // 优化：减少等待时间，Xray 通常 300ms 内就能启动
-            await new Promise(resolve => setTimeout(resolve, 300));
+            const earlyExit = new Promise((_, reject) => {
+                const onError = (err) => reject(err);
+                const onExit = (code, signal) => reject(new Error(`Xray exited before ready: ${code ?? signal ?? 'unknown'}`));
+                xrayProcess.once('error', onError);
+                xrayProcess.once('exit', onExit);
+                setTimeout(() => {
+                    xrayProcess.off('error', onError);
+                    xrayProcess.off('exit', onExit);
+                }, 3000);
+            });
+            const ready = await Promise.race([
+                waitForLocalPortReady(localPort, 3000),
+                earlyExit
+            ]);
+            if (!ready) {
+                throw new Error('Xray did not open local proxy port in time');
+            }
         }
 
         // 0. Resolve language override
@@ -4407,15 +4683,6 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
                     console.warn('Service Worker bypass failed:', e.message || e);
                 }
 
-                const metricsOverride = buildDeviceMetricsOverride(profile.fingerprint);
-                if (metricsOverride) {
-                    try {
-                        await session.send('Emulation.setDeviceMetricsOverride', metricsOverride);
-                    } catch (e) {
-                        console.warn('Device metrics override failed:', e.message || e);
-                    }
-                }
-
                 const hardwareConcurrency = Number(profile.fingerprint?.hardwareConcurrency);
                 if (Number.isFinite(hardwareConcurrency) && hardwareConcurrency > 0) {
                     try {
@@ -4689,7 +4956,14 @@ app.on('before-quit', () => {
 
 app.on('window-all-closed', () => {
     if (!isAppQuitting) return;
-    Object.values(activeProcesses).forEach(p => forceKill(p.xrayPid));
+    Object.values(activeProcesses).forEach(p => {
+        forceKill(p.xrayPid).catch(() => { });
+        try { p.browser?.close?.(); } catch (e) { }
+        if (p.logFd !== undefined) {
+            try { fs.closeSync(p.logFd); } catch (e) { }
+        }
+    });
+    activeProcesses = {};
     if (appTray && (typeof appTray.isDestroyed !== 'function' || !appTray.isDestroyed())) {
         try { appTray.destroy(); } catch (e) { }
         appTray = null;
@@ -4702,10 +4976,15 @@ function getLocalXrayVersion() { return new Promise((resolve) => { if (!fs.exist
 function compareVersions(v1, v2) { const p1 = v1.split('.').map(Number); const p2 = v2.split('.').map(Number); for (let i = 0; i < 3; i++) { if ((p1[i] || 0) > (p2[i] || 0)) return 1; if ((p1[i] || 0) < (p2[i] || 0)) return -1; } return 0; }
 function downloadFile(url, dest, onProgress) {
     return new Promise((resolve, reject) => {
-        const file = fs.createWriteStream(dest);
-        https.get(url, (response) => {
+        const request = https.get(url, (response) => {
             if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+                response.resume();
                 downloadFile(response.headers.location, dest, onProgress).then(resolve).catch(reject);
+                return;
+            }
+            if (response.statusCode < 200 || response.statusCode >= 300) {
+                response.resume();
+                reject(new Error(`Download failed with HTTP ${response.statusCode}`));
                 return;
             }
 
@@ -4722,13 +5001,22 @@ function downloadFile(url, dest, onProgress) {
                 }
             });
 
+            const file = fs.createWriteStream(dest);
             response.pipe(file);
             file.on('finish', () => {
                 try { file.close(resolve); } catch (e) { resolve(); }
             });
+            file.on('error', (err) => {
+                try { file.close(() => { }); } catch (e) { }
+                fs.unlink(dest, () => { });
+                reject(err);
+            });
         }).on('error', (err) => {
             fs.unlink(dest, () => { });
             reject(err);
+        });
+        request.setTimeout(60000, () => {
+            request.destroy(new Error('Download timed out'));
         });
     });
 }
