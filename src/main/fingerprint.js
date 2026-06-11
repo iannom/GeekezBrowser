@@ -10,12 +10,15 @@ const RESOLUTIONS = [
     { w: 1440, h: 900 }
 ];
 
-const BROWSER_MAJOR_VERSIONS = Array.from({ length: 19 }, (_, i) => 129 + i); // 129 - 147
-const BROWSER_TYPES = ['chrome', 'edge'];
+const CURRENT_CHROME_MAJOR_VERSION = 147;
+const CURRENT_CHROME_REDUCED_VERSION = '147.0.0.0';
+const CURRENT_CHROME_FULL_VERSION = '147.0.7727.50';
+const GREASE_BRAND_VERSION = '8';
+const BROWSER_MAJOR_VERSIONS = [CURRENT_CHROME_MAJOR_VERSION];
+const BROWSER_TYPES = ['chrome'];
 const UTLS_SIGNATURES = [
     'none',
     'chrome',
-    'edge',
     'firefox',
     'safari',
     'ios',
@@ -26,33 +29,16 @@ const UTLS_SIGNATURES = [
     'randomized',
     'hellorandomizednoalpn'
 ];
-const BROWSER_FULL_VERSION_POOL = [
-    '147.0.0.0',
-    '146.0.0.0',
-    '145.0.0.0',
-    '144.0.0.0',
-    '143.0.0.0',
-    '142.0.0.0',
-    '141.0.0.0',
-    '140.0.0.0',
-    '139.0.0.0',
-    '138.0.0.0',
-    '137.0.0.0',
-    '136.0.0.0',
-    '135.0.0.0',
-    '134.0.0.0',
-    '133.0.0.0',
-    '132.0.0.0',
-    '131.0.0.0',
-    '130.0.0.0',
-    '129.0.0.0'
-];
+const BROWSER_FULL_VERSION_POOL = [CURRENT_CHROME_REDUCED_VERSION];
 const BROWSER_FULL_VERSION_BY_MAJOR = BROWSER_FULL_VERSION_POOL.reduce((acc, version) => {
     const major = String(version).split('.')[0];
     if (!acc[major]) acc[major] = [];
     if (!acc[major].includes(version)) acc[major].push(version);
     return acc;
 }, {});
+const BROWSER_HIGH_ENTROPY_VERSION_BY_MAJOR = {
+    [String(CURRENT_CHROME_MAJOR_VERSION)]: CURRENT_CHROME_FULL_VERSION
+};
 const TIMEZONE_ALIASES = {
     'America/Honolulu': 'Pacific/Honolulu',
     'America/Atlanta': 'America/New_York',
@@ -81,6 +67,43 @@ const TIMEZONE_ALIASES = {
     'Asia/Kyoto': 'Asia/Tokyo',
     'Asia/Osaka': 'Asia/Tokyo',
     'Asia/Mumbai': 'Asia/Kolkata'
+};
+const TIMEZONE_LANGUAGE_MAP = {
+    'America/New_York': 'en-US',
+    'America/Chicago': 'en-US',
+    'America/Denver': 'en-US',
+    'America/Los_Angeles': 'en-US',
+    'America/Phoenix': 'en-US',
+    'Pacific/Honolulu': 'en-US',
+    'America/Toronto': 'en-CA',
+    'America/Vancouver': 'en-CA',
+    'America/Montreal': 'fr-CA',
+    'America/Mexico_City': 'es-MX',
+    'America/Sao_Paulo': 'pt-BR',
+    'Europe/London': 'en-GB',
+    'Europe/Paris': 'fr-FR',
+    'Europe/Berlin': 'de-DE',
+    'Europe/Rome': 'it-IT',
+    'Europe/Madrid': 'es-ES',
+    'Europe/Amsterdam': 'nl-NL',
+    'Europe/Brussels': 'fr-BE',
+    'Europe/Zurich': 'de-CH',
+    'Europe/Vienna': 'de-AT',
+    'Europe/Moscow': 'ru-RU',
+    'Europe/Istanbul': 'tr-TR',
+    'Asia/Tokyo': 'ja-JP',
+    'Asia/Singapore': 'en-US',
+    'Asia/Hong_Kong': 'zh-HK',
+    'Asia/Shanghai': 'zh-CN',
+    'Asia/Taipei': 'zh-TW',
+    'Asia/Seoul': 'ko-KR',
+    'Asia/Dubai': 'ar-AE',
+    'Asia/Kolkata': 'hi-IN',
+    'Asia/Bangkok': 'th-TH',
+    'Asia/Jakarta': 'id-ID',
+    'Asia/Ho_Chi_Minh': 'vi-VN',
+    'Australia/Sydney': 'en-AU',
+    'Australia/Melbourne': 'en-AU'
 };
 
 const WEBGL_CATALOG = {
@@ -532,25 +555,39 @@ function isSupportedTimezone(value) {
     }
 }
 
-function resolveTimezone(value) {
+function resolveTimezone(value, city) {
     const raw = String(value || '').trim();
-    if (!raw) return 'America/Los_Angeles';
-    if (raw === 'Auto' || raw === 'Auto (No Change)') return 'Auto';
+    const rawCity = String(city || '').trim();
+    const candidate = raw && raw !== 'Auto' && raw !== 'Auto (No Change)' ? raw : rawCity;
+    if (!candidate || candidate === 'Auto' || candidate === 'Auto (No Change)' || candidate === 'Auto (IP Based)') {
+        return 'Auto';
+    }
 
-    const mapped = TIMEZONE_ALIASES[raw] || raw;
+    const mapped = TIMEZONE_ALIASES[candidate] || candidate;
     if (isSupportedTimezone(mapped)) return mapped;
     return 'Auto';
 }
 
-function resolveRuntimePlatform(explicitPlatform) {
-    if (explicitPlatform === 'Win32') return 'windows';
-    if (explicitPlatform === 'MacIntel') return 'mac';
-    if (explicitPlatform === 'Linux x86_64') return 'linux';
+function inferLanguageFromTimezone(timezone) {
+    const normalized = TIMEZONE_ALIASES[timezone] || timezone;
+    return TIMEZONE_LANGUAGE_MAP[normalized] || 'auto';
+}
 
+function getHostRuntimePlatform() {
     const platform = os.platform();
     if (platform === 'win32') return 'windows';
     if (platform === 'darwin') return 'mac';
     return 'linux';
+}
+
+function resolveRuntimePlatform(explicitPlatform) {
+    const hostPlatform = getHostRuntimePlatform();
+    let requestedPlatform = hostPlatform;
+    if (explicitPlatform === 'Win32') requestedPlatform = 'windows';
+    if (explicitPlatform === 'MacIntel') requestedPlatform = 'mac';
+    if (explicitPlatform === 'Linux x86_64') requestedPlatform = 'linux';
+
+    return requestedPlatform === hostPlatform ? requestedPlatform : hostPlatform;
 }
 
 function getPlatformValues(runtimePlatform) {
@@ -594,10 +631,11 @@ function resolveUaMode(mode) {
     return mode === 'none' ? 'none' : 'spoof';
 }
 
-function resolveServiceWorkerMode(mode) {
+function resolveServiceWorkerMode(mode, uaMode = 'spoof') {
     const value = String(mode || '').trim().toLowerCase();
+    if (value === 'allow') return 'allow';
     if (['isolate', 'disable', 'disabled', 'block', 'bypass'].includes(value)) return 'isolate';
-    return 'allow';
+    return uaMode === 'none' ? 'allow' : 'isolate';
 }
 
 function resolveWebgpuMode(mode) {
@@ -608,14 +646,14 @@ function resolveWebgpuMode(mode) {
 
 function resolveBrowserMajorVersion(major) {
     const parsed = asNumber(major);
-    if (parsed && parsed >= 100 && parsed <= 200) return Math.floor(parsed);
+    if (parsed && BROWSER_MAJOR_VERSIONS.includes(Math.floor(parsed))) return Math.floor(parsed);
     return getRandom(BROWSER_MAJOR_VERSIONS);
 }
 
 function resolveBrowserFullVersion(fullVersion, majorVersion) {
     if (typeof fullVersion === 'string' && /^\d+\.\d+\.\d+\.\d+$/.test(fullVersion.trim())) {
         const normalized = fullVersion.trim();
-        if (Number(normalized.split('.')[0]) === Number(majorVersion)) {
+        if (Number(normalized.split('.')[0]) === Number(majorVersion) && normalized === CURRENT_CHROME_REDUCED_VERSION) {
             return normalized;
         }
     }
@@ -626,18 +664,13 @@ function resolveBrowserFullVersion(fullVersion, majorVersion) {
     return `${majorVersion}.0.0.0`;
 }
 
-function mapBrowserMajorToUtls(browserType, majorVersion) {
-    // Xray supports a limited set of uTLS signatures, so we map major versions to those
-    // signatures to keep TLS handshake style closer to the chosen browser family.
-    if (browserType === 'edge') {
-        if (majorVersion >= 132) return 'edge';
-        if (majorVersion >= 126) return 'chrome';
-        return 'randomized';
-    }
+function resolveBrowserHighEntropyVersion(majorVersion) {
+    return BROWSER_HIGH_ENTROPY_VERSION_BY_MAJOR[String(majorVersion)] || resolveBrowserFullVersion(null, majorVersion);
+}
 
-    if (majorVersion >= 134) return 'chrome';
-    if (majorVersion >= 128) return 'randomized';
-    if (majorVersion >= 123) return 'hellorandomizednoalpn';
+function mapBrowserMajorToUtls(browserType, majorVersion) {
+    void browserType;
+    void majorVersion;
     return 'chrome';
 }
 
@@ -647,27 +680,26 @@ function resolveTlsClientHello(value, browserType, majorVersion, uaMode) {
     return mapBrowserMajorToUtls(browserType, majorVersion);
 }
 
-function buildBrowserBrands(browserType, majorVersion, fullVersion) {
-    const browserBrand = browserType === 'edge' ? 'Microsoft Edge' : 'Google Chrome';
+function buildBrowserBrands(browserType, majorVersion, fullVersion, highEntropyVersion) {
+    void browserType;
+    void fullVersion;
     const brands = [
-        { brand: 'Not.A/Brand', version: '99' },
         { brand: 'Chromium', version: String(majorVersion) },
-        { brand: browserBrand, version: String(majorVersion) }
+        { brand: 'Not.A/Brand', version: GREASE_BRAND_VERSION }
     ];
 
     return {
         brands,
         fullVersionList: [
-            { brand: 'Not.A/Brand', version: '99.0.0.0' },
-            { brand: 'Chromium', version: fullVersion },
-            { brand: browserBrand, version: fullVersion }
+            { brand: 'Chromium', version: highEntropyVersion || fullVersion },
+            { brand: 'Not.A/Brand', version: `${GREASE_BRAND_VERSION}.0.0.0` }
         ]
     };
 }
 
 function buildUserAgent(browserType, fullVersion, uaPlatformToken) {
+    void browserType;
     const base = `Mozilla/5.0 (${uaPlatformToken}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${fullVersion} Safari/537.36`;
-    if (browserType === 'edge') return `${base} Edg/${fullVersion}`;
     return base;
 }
 
@@ -779,17 +811,23 @@ function generateFingerprint(options = {}) {
     const runtimePlatform = resolveRuntimePlatform(options.platform);
     const platformValues = getPlatformValues(runtimePlatform);
     const uaMode = resolveUaMode(options.uaMode);
-    const serviceWorkerMode = resolveServiceWorkerMode(options.serviceWorkerMode);
+    const serviceWorkerMode = resolveServiceWorkerMode(options.serviceWorkerMode, uaMode);
     const webgpuMode = resolveWebgpuMode(options.webgpuMode);
 
     const resolvedBrowserType = resolveBrowserType(options.browserType);
     const resolvedBrowserMajorVersion = resolveBrowserMajorVersion(options.browserMajorVersion);
     const resolvedBrowserFullVersion = resolveBrowserFullVersion(options.browserFullVersion, resolvedBrowserMajorVersion);
+    const resolvedBrowserHighEntropyVersion = resolveBrowserHighEntropyVersion(resolvedBrowserMajorVersion);
     const browserType = uaMode === 'none' ? null : resolvedBrowserType;
     const browserMajorVersion = uaMode === 'none' ? null : resolvedBrowserMajorVersion;
     const browserFullVersion = uaMode === 'none' ? null : resolvedBrowserFullVersion;
 
-    const brandInfo = buildBrowserBrands(resolvedBrowserType, resolvedBrowserMajorVersion, resolvedBrowserFullVersion);
+    const brandInfo = buildBrowserBrands(
+        resolvedBrowserType,
+        resolvedBrowserMajorVersion,
+        resolvedBrowserFullVersion,
+        resolvedBrowserHighEntropyVersion
+    );
     const defaultUaMetadata = {
         brands: brandInfo.brands,
         fullVersionList: brandInfo.fullVersionList,
@@ -800,14 +838,15 @@ function generateFingerprint(options = {}) {
         bitness: platformValues.bitness,
         model: '',
         wow64: false,
-        uaFullVersion: resolvedBrowserFullVersion
+        uaFullVersion: resolvedBrowserHighEntropyVersion
     };
 
     const screen = resolveScreen(options.screen, options.resW, options.resH);
     const viewport = resolveViewport(screen);
+    const timezone = resolveTimezone(options.timezone, options.city);
     const hasLanguageOverride = typeof options.language === 'string' && options.language && options.language !== 'auto';
-    const language = hasLanguageOverride ? options.language : 'auto';
-    const languages = hasLanguageOverride ? normalizeLanguages(language, options.languages) : [];
+    const language = hasLanguageOverride ? options.language : inferLanguageFromTimezone(timezone);
+    const languages = language !== 'auto' ? normalizeLanguages(language, options.languages) : [];
 
     const webgl = resolveWebglProfile(runtimePlatform, options.webglProfile || options.webglProfileId, options.webgl);
     const tlsClientHello = resolveTlsClientHello(options.tlsClientHello, resolvedBrowserType, resolvedBrowserMajorVersion, uaMode);
@@ -836,7 +875,7 @@ function generateFingerprint(options = {}) {
         },
         audioNoise: typeof options.audioNoise === 'number' ? options.audioNoise : (Math.random() * 0.000001),
         noiseSeed: asNumber(options.noiseSeed) || randInt(1000, 9999999),
-        timezone: resolveTimezone(options.timezone),
+        timezone,
         city: options.city || null,
         geolocation: options.geolocation || null,
         browserType,
@@ -866,18 +905,33 @@ function getInjectScript(fp, profileName, watermarkStyle) {
         try {
             const fp = ${fpJson};
 
+            const nativeFunctionToString = Function.prototype.toString;
+            const nativeSourceMap = new WeakMap();
+            const patchedFunctionToString = function toString() {
+                try {
+                    if (nativeSourceMap.has(this)) return nativeSourceMap.get(this);
+                } catch (e) { }
+                return nativeFunctionToString.call(this);
+            };
+            try {
+                nativeSourceMap.set(patchedFunctionToString, 'function toString() { [native code] }');
+                Object.defineProperty(Function.prototype, 'toString', {
+                    value: patchedFunctionToString,
+                    configurable: true,
+                    writable: true
+                });
+            } catch (e) { }
+
             const makeNative = (func, name) => {
                 const nativeStr = 'function ' + name + '() { [native code] }';
-                Object.defineProperty(func, 'toString', {
-                    value: function() { return nativeStr; },
-                    configurable: true,
-                    writable: true
-                });
-                Object.defineProperty(func.toString, 'toString', {
-                    value: function() { return 'function toString() { [native code] }'; },
-                    configurable: true,
-                    writable: true
-                });
+                try {
+                    nativeSourceMap.set(func, nativeStr);
+                    Object.defineProperty(func, 'toString', {
+                        value: patchedFunctionToString,
+                        configurable: true,
+                        writable: true
+                    });
+                } catch (e) { }
                 return func;
             };
 
@@ -924,6 +978,189 @@ function getInjectScript(fp, profileName, watermarkStyle) {
                         enumerable: true,
                         writable: true
                     });
+                }
+            } catch (e) { }
+
+            try {
+                defineValueGetter(Navigator.prototype, 'pdfViewerEnabled', true, 'get pdfViewerEnabled');
+                defineValueGetter(Navigator.prototype, 'cookieEnabled', true, 'get cookieEnabled');
+                defineValueGetter(Navigator.prototype, 'maxTouchPoints', 0, 'get maxTouchPoints');
+                defineValueGetter(Navigator.prototype, 'doNotTrack', null, 'get doNotTrack');
+
+                const makeList = (items, tagName) => {
+                    const list = [];
+                    items.forEach((item, index) => {
+                        list[index] = item;
+                        if (item && item.name) {
+                            try { Object.defineProperty(list, item.name, { value: item, configurable: true }); } catch (e) { }
+                        }
+                        if (item && item.type) {
+                            try { Object.defineProperty(list, item.type, { value: item, configurable: true }); } catch (e) { }
+                        }
+                    });
+                    Object.defineProperty(list, 'length', { value: items.length });
+                    Object.defineProperty(list, 'item', {
+                        value: makeNative(function item(index) { return list[index] || null; }, 'item'),
+                        configurable: true
+                    });
+                    Object.defineProperty(list, 'namedItem', {
+                        value: makeNative(function namedItem(name) { return list[name] || null; }, 'namedItem'),
+                        configurable: true
+                    });
+                    if (tagName === 'PluginArray') {
+                        Object.defineProperty(list, 'refresh', {
+                            value: makeNative(function refresh() {}, 'refresh'),
+                            configurable: true
+                        });
+                    }
+                    try { Object.defineProperty(list, Symbol.toStringTag, { value: tagName, configurable: true }); } catch (e) { }
+                    return list;
+                };
+
+                if (!navigator.plugins || navigator.plugins.length === 0) {
+                    const pdfMimeTypes = [
+                        { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format' },
+                        { type: 'text/pdf', suffixes: 'pdf', description: 'Portable Document Format' }
+                    ];
+                    const pluginNames = [
+                        'PDF Viewer',
+                        'Chrome PDF Viewer',
+                        'Chromium PDF Viewer',
+                        'Microsoft Edge PDF Viewer',
+                        'WebKit built-in PDF'
+                    ];
+                    const plugins = pluginNames.map((name) => {
+                        const plugin = makeList(pdfMimeTypes, 'Plugin');
+                        Object.defineProperties(plugin, {
+                            name: { value: name, configurable: true },
+                            filename: { value: 'internal-pdf-viewer', configurable: true },
+                            description: { value: 'Portable Document Format', configurable: true }
+                        });
+                        return plugin;
+                    });
+                    const mimeTypes = pdfMimeTypes.map((mime) => ({ ...mime, enabledPlugin: plugins[0] }));
+                    defineValueGetter(Navigator.prototype, 'plugins', makeList(plugins, 'PluginArray'), 'get plugins');
+                    defineValueGetter(Navigator.prototype, 'mimeTypes', makeList(mimeTypes, 'MimeTypeArray'), 'get mimeTypes');
+                }
+
+                if (!navigator.connection) {
+                    const connectionInfo = Object.freeze({
+                        effectiveType: '4g',
+                        rtt: 100,
+                        downlink: 1.7,
+                        saveData: false,
+                        onchange: null,
+                        addEventListener: makeNative(function addEventListener() {}, 'addEventListener'),
+                        removeEventListener: makeNative(function removeEventListener() {}, 'removeEventListener'),
+                        dispatchEvent: makeNative(function dispatchEvent() { return true; }, 'dispatchEvent')
+                    });
+                    defineValueGetter(Navigator.prototype, 'connection', connectionInfo, 'get connection');
+                }
+
+                if (window.isSecureContext && !navigator.mediaDevices) {
+                    const mediaDevices = Object.freeze({
+                        enumerateDevices: makeNative(async function enumerateDevices() { return []; }, 'enumerateDevices'),
+                        getUserMedia: makeNative(function getUserMedia() {
+                            return Promise.reject(new DOMException('Permission denied', 'NotAllowedError'));
+                        }, 'getUserMedia'),
+                        addEventListener: makeNative(function addEventListener() {}, 'addEventListener'),
+                        removeEventListener: makeNative(function removeEventListener() {}, 'removeEventListener'),
+                        dispatchEvent: makeNative(function dispatchEvent() { return true; }, 'dispatchEvent')
+                    });
+                    defineValueGetter(Navigator.prototype, 'mediaDevices', mediaDevices, 'get mediaDevices');
+                }
+
+                if (navigator.permissions && navigator.permissions.query) {
+                    const originalPermissionQuery = navigator.permissions.query.bind(navigator.permissions);
+                    const permissionStates = {
+                        notifications: 'prompt',
+                        push: 'prompt',
+                        midi: 'prompt',
+                        camera: 'prompt',
+                        microphone: 'prompt',
+                        background_sync: 'granted',
+                        persistent_storage: 'prompt'
+                    };
+
+                    const buildPermissionStatusFallback = (state) => {
+                        let status;
+                        try {
+                            status = typeof EventTarget === 'function' ? new EventTarget() : {};
+                        } catch (e) {
+                            status = {};
+                        }
+                        try {
+                            Object.defineProperty(status, Symbol.toStringTag, {
+                                value: 'PermissionStatus',
+                                configurable: true
+                            });
+                        } catch (e) { }
+                        try {
+                            Object.defineProperties(status, {
+                                state: {
+                                    get: makeNative(function() { return state; }, 'get state'),
+                                    configurable: true,
+                                    enumerable: true
+                                },
+                                onchange: {
+                                    get: makeNative(function() { return null; }, 'get onchange'),
+                                    set: makeNative(function() {}, 'set onchange'),
+                                    configurable: true,
+                                    enumerable: true
+                                }
+                            });
+                        } catch (e) {
+                            status.state = state;
+                            status.onchange = null;
+                        }
+                        return status;
+                    };
+
+                    const wrapPermissionStatus = (status, state) => {
+                        if (!status || typeof status !== 'object') return buildPermissionStatusFallback(state);
+                        try {
+                            return new Proxy(status, {
+                                get(target, prop) {
+                                    if (prop === 'state') return state;
+                                    if (prop === 'onchange') return null;
+                                    const value = Reflect.get(target, prop, target);
+                                    return typeof value === 'function' ? value.bind(target) : value;
+                                },
+                                set(target, prop, value) {
+                                    if (prop === 'onchange') return true;
+                                    return Reflect.set(target, prop, value, target);
+                                }
+                            });
+                        } catch (e) {
+                            return buildPermissionStatusFallback(state);
+                        }
+                    };
+
+                    navigator.permissions.query = makeNative(async function query(permissionDesc) {
+                        const name = permissionDesc && String(permissionDesc.name || '').replace(/-/g, '_');
+                        if (Object.prototype.hasOwnProperty.call(permissionStates, name)) {
+                            try {
+                                const status = await originalPermissionQuery(permissionDesc);
+                                return wrapPermissionStatus(status, permissionStates[name]);
+                            } catch (e) {
+                                return buildPermissionStatusFallback(permissionStates[name]);
+                            }
+                        }
+                        return originalPermissionQuery(permissionDesc);
+                    }, 'query');
+                }
+
+                if (navigator.storage && navigator.storage.estimate) {
+                    const originalEstimate = navigator.storage.estimate.bind(navigator.storage);
+                    navigator.storage.estimate = makeNative(async function estimate() {
+                        const result = await originalEstimate().catch(() => ({}));
+                        const quota = Number(result.quota);
+                        const usage = Number(result.usage);
+                        return {
+                            quota: Number.isFinite(quota) && quota > 0 ? quota : 64 * 1024 * 1024 * 1024,
+                            usage: Number.isFinite(usage) && usage >= 0 ? usage : 0
+                        };
+                    }, 'estimate');
                 }
             } catch (e) { }
 
@@ -1274,6 +1511,22 @@ function getInjectScript(fp, profileName, watermarkStyle) {
                 if (Array.isArray(value)) return value.slice();
                 return value;
             };
+            const buildShaderPrecisionFormat = (shaderType, precisionType) => {
+                const value = {};
+                const isFloat = [36336, 36337, 36338].includes(Number(precisionType));
+                Object.defineProperties(value, {
+                    rangeMin: { value: isFloat ? 127 : 31, enumerable: true },
+                    rangeMax: { value: isFloat ? 127 : 30, enumerable: true },
+                    precision: { value: isFloat ? 23 : 0, enumerable: true }
+                });
+                try {
+                    Object.defineProperty(value, Symbol.toStringTag, {
+                        value: 'WebGLShaderPrecisionFormat',
+                        configurable: true
+                    });
+                } catch (e) { }
+                return value;
+            };
             const applyWebglReadPixelsNoise = (pixels) => {
                 if (!pixels || typeof pixels.length !== 'number' || !fp.noiseSeed) return;
                 const noise = fp.canvasNoise || {};
@@ -1297,6 +1550,7 @@ function getInjectScript(fp, profileName, watermarkStyle) {
                     const originalGetParameter = proto.getParameter;
                     const originalGetExtension = proto.getExtension;
                     const originalGetSupportedExtensions = proto.getSupportedExtensions;
+                    const originalGetShaderPrecisionFormat = proto.getShaderPrecisionFormat;
                     const originalReadPixels = proto.readPixels;
 
                     const hookedGetParameter = function getParameter(param) {
@@ -1327,6 +1581,11 @@ function getInjectScript(fp, profileName, watermarkStyle) {
                     proto.getExtension = makeNative(hookedGetExtension, 'getExtension');
                     if (originalGetSupportedExtensions) {
                         proto.getSupportedExtensions = makeNative(hookedGetSupportedExtensions, 'getSupportedExtensions');
+                    }
+                    if (originalGetShaderPrecisionFormat) {
+                        proto.getShaderPrecisionFormat = makeNative(function getShaderPrecisionFormat(shaderType, precisionType) {
+                            return buildShaderPrecisionFormat(shaderType, precisionType);
+                        }, 'getShaderPrecisionFormat');
                     }
                     if (originalReadPixels) {
                         proto.readPixels = makeNative(function readPixels() {
@@ -1457,12 +1716,31 @@ function getInjectScript(fp, profileName, watermarkStyle) {
 
                     const workerPatch = function(workerPayload) {
                         try {
+                            const nativeFunctionToString = Function.prototype.toString;
+                            const nativeSourceMap = new WeakMap();
+                            const patchedFunctionToString = function toString() {
+                                try {
+                                    if (nativeSourceMap.has(this)) return nativeSourceMap.get(this);
+                                } catch (e) { }
+                                return nativeFunctionToString.call(this);
+                            };
+                            try {
+                                nativeSourceMap.set(patchedFunctionToString, 'function toString() { [native code] }');
+                                Object.defineProperty(Function.prototype, 'toString', {
+                                    value: patchedFunctionToString,
+                                    configurable: true,
+                                    writable: true
+                                });
+                            } catch (e) { }
+
                             const makeNative = (func, name) => {
                                 const nativeStr = 'function ' + name + '() { [native code] }';
                                 try {
+                                    nativeSourceMap.set(func, nativeStr);
                                     Object.defineProperty(func, 'toString', {
-                                        value: function() { return nativeStr; },
-                                        configurable: true
+                                        value: patchedFunctionToString,
+                                        configurable: true,
+                                        writable: true
                                     });
                                 } catch (e) { }
                                 return func;
@@ -1614,6 +1892,22 @@ function getInjectScript(fp, profileName, watermarkStyle) {
                                     if (Array.isArray(value)) return value.slice();
                                     return value;
                                 };
+                                const buildShaderPrecisionFormat = (precisionType) => {
+                                    const value = {};
+                                    const isFloat = [36336, 36337, 36338].includes(Number(precisionType));
+                                    Object.defineProperties(value, {
+                                        rangeMin: { value: isFloat ? 127 : 31, enumerable: true },
+                                        rangeMax: { value: isFloat ? 127 : 30, enumerable: true },
+                                        precision: { value: isFloat ? 23 : 0, enumerable: true }
+                                    });
+                                    try {
+                                        Object.defineProperty(value, Symbol.toStringTag, {
+                                            value: 'WebGLShaderPrecisionFormat',
+                                            configurable: true
+                                        });
+                                    } catch (e) { }
+                                    return value;
+                                };
                                 const applyWorkerReadPixelsNoise = (pixels) => {
                                     if (!pixels || typeof pixels.length !== 'number') return;
                                     const seed = Number(workerPayload.noiseSeed) || 1009;
@@ -1636,6 +1930,7 @@ function getInjectScript(fp, profileName, watermarkStyle) {
                                         const origGetParameter = proto.getParameter;
                                         const origGetExtension = proto.getExtension;
                                         const origGetSupportedExtensions = proto.getSupportedExtensions;
+                                        const origGetShaderPrecisionFormat = proto.getShaderPrecisionFormat;
                                         const origReadPixels = proto.readPixels;
                                         proto.getParameter = makeNative(function getParameter(param) {
                                             if (param === 37445) return workerWebgl.unmaskedVendor || workerWebgl.vendor || 'Google Inc.';
@@ -1659,6 +1954,11 @@ function getInjectScript(fp, profileName, watermarkStyle) {
                                                 }
                                                 return list;
                                             }, 'getSupportedExtensions');
+                                        }
+                                        if (origGetShaderPrecisionFormat) {
+                                            proto.getShaderPrecisionFormat = makeNative(function getShaderPrecisionFormat(shaderType, precisionType) {
+                                                return buildShaderPrecisionFormat(precisionType);
+                                            }, 'getShaderPrecisionFormat');
                                         }
                                         if (origReadPixels) {
                                             proto.readPixels = makeNative(function readPixels() {

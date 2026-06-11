@@ -391,18 +391,7 @@ function parseProxyLink(link, tag) {
 function deriveUtlsFingerprint(profileFingerprint = {}) {
     if (profileFingerprint.uaMode === 'none') return '';
 
-    const browserType = String(profileFingerprint.browserType || '').toLowerCase();
-    const major = Number(profileFingerprint.browserMajorVersion) || 0;
-
-    if (browserType === 'edge') {
-        if (major >= 132) return 'edge';
-        if (major >= 126) return 'chrome';
-        return 'randomized';
-    }
-
-    if (major >= 134) return 'chrome';
-    if (major >= 128) return 'randomized';
-    if (major >= 123) return 'hellorandomizednoalpn';
+    void profileFingerprint;
     return 'chrome';
 }
 

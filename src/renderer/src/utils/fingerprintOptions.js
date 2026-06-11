@@ -2,30 +2,26 @@ function makeOption(value, label, labelZh = '') {
     return { value, label, labelZh: labelZh || label };
 }
 
+export const currentChromeMajorVersion = 147;
+
 export const browserTypeOptions = [
     makeOption('auto', 'Auto Random', '自动随机'),
-    makeOption('chrome', 'Google Chrome', 'Google Chrome'),
-    makeOption('edge', 'Microsoft Edge', 'Microsoft Edge')
+    makeOption('chrome', 'Google Chrome', 'Google Chrome')
 ];
 
 export const browserMajorVersionOptions = [
     makeOption('auto', 'Auto Random', '自动随机'),
-    ...Array.from({ length: 19 }, (_, i) => {
-        const major = 147 - i;
-        return makeOption(major, `v${major}`, `v${major}`);
-    })
+    makeOption(currentChromeMajorVersion, `v${currentChromeMajorVersion}`, `v${currentChromeMajorVersion}`)
 ];
 
 export const browserVersionPresetOptions = [
     makeOption('none', 'No UA Modification', '不修改 UA'),
     makeOption('auto', 'Auto Random', '自动随机'),
-    ...Array.from({ length: 19 }, (_, i) => {
-        const major = 147 - i;
-        return [
-            makeOption(`chrome:${major}`, `Chrome v${major}`, `Chrome v${major}`),
-            makeOption(`edge:${major}`, `Edge v${major}`, `Edge v${major}`)
-        ];
-    }).flat()
+    makeOption(
+        `chrome:${currentChromeMajorVersion}`,
+        `Chrome v${currentChromeMajorVersion}`,
+        `Chrome v${currentChromeMajorVersion}`
+    )
 ];
 
 export const tlsClientHelloOptions = [

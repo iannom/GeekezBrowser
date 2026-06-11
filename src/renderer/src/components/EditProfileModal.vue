@@ -107,6 +107,7 @@ import { useUIStore } from '../store/useUIStore';
 import { useProfileStore } from '../store/useProfileStore';
 import {
   browserVersionPresetOptions,
+  currentChromeMajorVersion,
   webglProfileOptions,
   getOptionLabel
 } from '../utils/fingerprintOptions';
@@ -141,22 +142,22 @@ function parseBrowserVersionPreset(preset) {
     return { uaMode: 'spoof', browserType: 'auto', browserMajorVersion: 'auto' };
   }
   const [browserTypeRaw, majorRaw] = String(preset).split(':');
-  const browserType = browserTypeRaw === 'edge' ? 'edge' : 'chrome';
+  const browserType = browserTypeRaw === 'chrome' ? 'chrome' : 'auto';
   const major = Number(majorRaw);
-  if (!Number.isFinite(major)) {
-    return { uaMode: 'none', browserType: 'auto', browserMajorVersion: 'auto' };
+  if (browserType !== 'chrome' || major !== currentChromeMajorVersion) {
+    return { uaMode: 'spoof', browserType: 'auto', browserMajorVersion: 'auto' };
   }
   return { uaMode: 'spoof', browserType, browserMajorVersion: major };
 }
 
 function toBrowserVersionPreset(uaMode, browserType, browserMajorVersion) {
   if (uaMode === 'none') return 'none';
-  const type = browserType === 'edge' ? 'edge' : (browserType === 'chrome' ? 'chrome' : 'auto');
+  const type = browserType === 'chrome' ? 'chrome' : 'auto';
   const major = Number(browserMajorVersion);
-  if (type === 'auto' || !Number.isFinite(major)) return 'none';
+  if (type === 'auto' || !Number.isFinite(major)) return uaMode === 'none' ? 'none' : 'auto';
   const preset = `${type}:${major}`;
   const exists = browserVersionPresetOptions.some(opt => opt.value === preset);
-  return exists ? preset : 'none';
+  return exists ? preset : 'auto';
 }
 
 // Searchable Dropdowns State

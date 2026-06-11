@@ -4522,8 +4522,6 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
         const launchArgs = [
             `--user-data-dir=${userDataDir}`,
             `--window-size=${profile.fingerprint?.window?.width || 1280},${profile.fingerprint?.window?.height || 800}`,
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
             '--disable-blink-features=AutomationControlled',
             `--disable-features=${disabledFeatures.join(',')}`,
             '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
@@ -4536,10 +4534,16 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
             '--disable-background-timer-throttling', // 防止后台标签页被限速
             '--disable-backgrounding-occluded-windows',
             '--disable-renderer-backgrounding',
-            '--disable-dev-shm-usage',           // 减少共享内存使用
             '--disk-cache-size=52428800',        // 限制磁盘缓存为 50MB
             '--media-cache-size=52428800'        // 限制媒体缓存为 50MB
         ];
+        if (process.platform === 'linux') {
+            launchArgs.push(
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage'
+            );
+        }
         if (shouldRestoreSession) {
             launchArgs.push('--restore-last-session');
         }
@@ -4633,6 +4637,34 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
     const webglInfo = ${webglJson};
     const PATCHED_KEY = '__geekezDirectWebglPatched__';
     const debugExt = { UNMASKED_VENDOR_WEBGL: 37445, UNMASKED_RENDERER_WEBGL: 37446 };
+    const nativeFunctionToString = Function.prototype.toString;
+    const nativeSourceMap = new WeakMap();
+    const patchedFunctionToString = function toString() {
+      try {
+        if (nativeSourceMap.has(this)) return nativeSourceMap.get(this);
+      } catch (e) {}
+      return nativeFunctionToString.call(this);
+    };
+    try {
+      nativeSourceMap.set(patchedFunctionToString, 'function toString() { [native code] }');
+      Object.defineProperty(Function.prototype, 'toString', {
+        value: patchedFunctionToString,
+        configurable: true,
+        writable: true
+      });
+    } catch (e) {}
+    const makeNative = (func, name) => {
+      const nativeStr = 'function ' + name + '() { [native code] }';
+      try {
+        nativeSourceMap.set(func, nativeStr);
+        Object.defineProperty(func, 'toString', {
+          value: patchedFunctionToString,
+          configurable: true,
+          writable: true
+        });
+      } catch (e) {}
+      return func;
+    };
 
     const caps = (() => {
       const renderer = String(webglInfo.unmaskedRenderer || webglInfo.renderer || '').toLowerCase();
@@ -4666,6 +4698,17 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
       if (value instanceof Float32Array) return new Float32Array(value);
       return value;
     };
+    const buildShaderPrecisionFormat = (precisionType) => {
+      const value = {};
+      const isFloat = [36336, 36337, 36338].includes(Number(precisionType));
+      Object.defineProperties(value, {
+        rangeMin: { value: isFloat ? 127 : 31, enumerable: true },
+        rangeMax: { value: isFloat ? 127 : 30, enumerable: true },
+        precision: { value: isFloat ? 23 : 0, enumerable: true }
+      });
+      try { Object.defineProperty(value, Symbol.toStringTag, { value: 'WebGLShaderPrecisionFormat', configurable: true }); } catch (e) {}
+      return value;
+    };
 
     const patchProto = (proto) => {
       if (!proto || proto[PATCHED_KEY]) return;
@@ -4673,7 +4716,8 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
         const originalGetParameter = proto.getParameter;
         const originalGetExtension = proto.getExtension;
         const originalGetSupportedExtensions = proto.getSupportedExtensions;
-        proto.getParameter = function(param) {
+        const originalGetShaderPrecisionFormat = proto.getShaderPrecisionFormat;
+        proto.getParameter = makeNative(function getParameter(param) {
           if (param === 37445) return webglInfo.unmaskedVendor || webglInfo.vendor || 'Google Inc.';
           if (param === 37446) return webglInfo.unmaskedRenderer || webglInfo.renderer || 'ANGLE (Unknown GPU)';
           if (param === 7936) return webglInfo.vendor || 'Google Inc.';
@@ -4682,17 +4726,22 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
           if (param === 35724) return webglInfo.shadingLanguageVersion || 'WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)';
           if (Object.prototype.hasOwnProperty.call(caps, param)) return cloneCap(caps[param]);
           return originalGetParameter.apply(this, arguments);
-        };
-        proto.getExtension = function(name) {
+        }, 'getParameter');
+        proto.getExtension = makeNative(function getExtension(name) {
           if (name === 'WEBGL_debug_renderer_info') return debugExt;
           return originalGetExtension.apply(this, arguments);
-        };
+        }, 'getExtension');
         if (originalGetSupportedExtensions) {
-          proto.getSupportedExtensions = function() {
+          proto.getSupportedExtensions = makeNative(function getSupportedExtensions() {
             const list = originalGetSupportedExtensions.apply(this, arguments) || [];
             if (Array.isArray(list) && !list.includes('WEBGL_debug_renderer_info')) return list.concat(['WEBGL_debug_renderer_info']);
             return list;
-          };
+          }, 'getSupportedExtensions');
+        }
+        if (originalGetShaderPrecisionFormat) {
+          proto.getShaderPrecisionFormat = makeNative(function getShaderPrecisionFormat(shaderType, precisionType) {
+            return buildShaderPrecisionFormat(precisionType);
+          }, 'getShaderPrecisionFormat');
         }
         Object.defineProperty(proto, PATCHED_KEY, { value: true, configurable: true });
       } catch (e) {}
@@ -4702,14 +4751,14 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
       if (!factoryProto || !factoryProto.getContext || factoryProto.__geekezCtxPatched__) return;
       try {
         const originalGetContext = factoryProto.getContext;
-        factoryProto.getContext = function(type) {
+        factoryProto.getContext = makeNative(function getContext(type) {
           const ctx = originalGetContext.apply(this, arguments);
           const name = String(type || '').toLowerCase();
           if (name === 'webgl' || name === 'experimental-webgl' || name === 'webgl2') {
             try { patchProto(Object.getPrototypeOf(ctx)); } catch (e) {}
           }
           return ctx;
-        };
+        }, 'getContext');
         Object.defineProperty(factoryProto, '__geekezCtxPatched__', { value: true, configurable: true });
       } catch (e) {}
     };

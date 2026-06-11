@@ -141,6 +141,7 @@ import { useUIStore } from '../store/useUIStore';
 import { useProfileStore } from '../store/useProfileStore';
 import {
     browserVersionPresetOptions,
+    currentChromeMajorVersion,
     webglProfileOptions,
     getOptionLabel
 } from '../utils/fingerprintOptions';
@@ -260,10 +261,10 @@ function parseBrowserVersionPreset(preset) {
         return { uaMode: 'spoof', browserType: 'auto', browserMajorVersion: 'auto' };
     }
     const [browserTypeRaw, majorRaw] = String(preset).split(':');
-    const browserType = browserTypeRaw === 'edge' ? 'edge' : 'chrome';
+    const browserType = browserTypeRaw === 'chrome' ? 'chrome' : 'auto';
     const major = Number(majorRaw);
-    if (!Number.isFinite(major)) {
-        return { uaMode: 'none', browserType: 'auto', browserMajorVersion: 'auto' };
+    if (browserType !== 'chrome' || major !== currentChromeMajorVersion) {
+        return { uaMode: 'spoof', browserType: 'auto', browserMajorVersion: 'auto' };
     }
     return { uaMode: 'spoof', browserType, browserMajorVersion: major };
 }
