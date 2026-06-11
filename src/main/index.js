@@ -15,6 +15,7 @@ const { promisify } = require('util');
 const { getChromiumPath: resolveChromiumPathForApp } = require('./chromium-path');
 const { CLOSE_BEHAVIOR, normalizeCloseBehavior, resolveCloseBehavior } = require('./close-behavior');
 const { resolveXrayAssetName } = require('./xray-assets');
+const { getPlatformArch, resolveXrayLaunchLayout, resolveXrayUpdateLayout } = require('./xray-runtime');
 const {
     PROFILE_COPY_MODE,
     normalizeProfileCopyMode,
@@ -69,13 +70,7 @@ import { generateFingerprint, getInjectScript } from './fingerprint';
 
 const isDev = !app.isPackaged;
 const RESOURCES_BIN = isDev ? path.join(app.getAppPath(), 'resources', 'bin') : path.join(process.resourcesPath, 'bin');
-// Use platform+arch specific directory for xray binary
-const PLATFORM_ARCH = `${process.platform}-${process.arch}`; // e.g., darwin-arm64, darwin-x64, win32-x64
-const BIN_DIR = path.join(RESOURCES_BIN, PLATFORM_ARCH);
-const BIN_PATH = path.join(BIN_DIR, process.platform === 'win32' ? 'xray.exe' : 'xray');
-// Fallback to old location for backward compatibility
-const BIN_DIR_LEGACY = RESOURCES_BIN;
-const BIN_PATH_LEGACY = path.join(BIN_DIR_LEGACY, process.platform === 'win32' ? 'xray.exe' : 'xray');
+const PLATFORM_ARCH = getPlatformArch(process.platform, process.arch);
 
 // 自定义数据目录支持
 const APP_CONFIG_FILE = path.join(app.getPath('userData'), 'app-config.json');
@@ -2080,8 +2075,37 @@ function getChromiumPath() {
         appPath: app.getAppPath(),
         resourcesPath: process.resourcesPath,
         platform: process.platform,
+        arch: process.arch,
         env: process.env
     });
+}
+
+function getXrayLaunchLayout() {
+    return resolveXrayLaunchLayout({
+        resourcesBin: RESOURCES_BIN,
+        userDataPath: app.getPath('userData'),
+        isDev,
+        platform: process.platform,
+        arch: process.arch
+    });
+}
+
+function getXrayUpdateLayout() {
+    return resolveXrayUpdateLayout({
+        resourcesBin: RESOURCES_BIN,
+        userDataPath: app.getPath('userData'),
+        isDev,
+        platform: process.platform,
+        arch: process.arch
+    });
+}
+
+function requireXrayLaunchLayout() {
+    const layout = getXrayLaunchLayout();
+    if (!layout) {
+        throw new Error(`Xray binary not found for ${PLATFORM_ARCH}. Run resource setup or update Xray.`);
+    }
+    return layout;
 }
 
 // Settings management
@@ -3196,7 +3220,8 @@ async function runProxyLatencyTest(proxyStr) {
         };
         await fs.writeJson(tempConfigPath, config);
 
-        xrayProcess = spawn(BIN_PATH, ['-c', tempConfigPath], { cwd: BIN_DIR, env: { ...process.env, 'XRAY_LOCATION_ASSET': RESOURCES_BIN }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+        const xrayLayout = requireXrayLaunchLayout();
+        xrayProcess = spawn(xrayLayout.binPath, ['-c', tempConfigPath], { cwd: xrayLayout.binDir, env: { ...process.env, 'XRAY_LOCATION_ASSET': xrayLayout.assetDir }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
         let xrayErr = '';
         xrayProcess.stderr.on('data', d => {
             const chunk = d.toString();
@@ -3326,22 +3351,38 @@ ipcMain.handle('download-xray-update', async (e, url) => {
             throw new Error('Xray binary not found in package');
         }
 
-        // Windows文件锁规避：先重命名旧文件，再复制新文件
-        const oldPath = BIN_PATH + '.old';
-        if (fs.existsSync(BIN_PATH)) {
+        const updateLayout = getXrayUpdateLayout();
+        if (!updateLayout) {
+            throw new Error(`Unsupported Xray update target for ${PLATFORM_ARCH}`);
+        }
+        fs.ensureDirSync(updateLayout.binDir);
+
+        const oldPath = updateLayout.binPath + '.old';
+        const newPath = updateLayout.binPath + '.new';
+        if (fs.existsSync(newPath)) {
+            fs.unlinkSync(newPath);
+        }
+        fs.copyFileSync(xrayBinary, newPath);
+        if (process.platform !== 'win32') fs.chmodSync(newPath, '755');
+
+        if (fs.existsSync(updateLayout.binPath)) {
             try {
                 if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
             } catch (e) { }
-            fs.renameSync(BIN_PATH, oldPath);
+            fs.renameSync(updateLayout.binPath, oldPath);
         }
-        fs.ensureDirSync(BIN_DIR);
-        fs.copyFileSync(xrayBinary, BIN_PATH);
-        if (process.platform !== 'win32') fs.chmodSync(BIN_PATH, '755');
-        // 删除旧文件
+        try {
+            fs.renameSync(newPath, updateLayout.binPath);
+        } catch (err) {
+            if (fs.existsSync(oldPath) && !fs.existsSync(updateLayout.binPath)) {
+                fs.renameSync(oldPath, updateLayout.binPath);
+            }
+            throw err;
+        }
         try {
             if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
         } catch (e) { }
-        if (process.platform !== 'win32') fs.chmodSync(BIN_PATH, '755');
+        if (process.platform !== 'win32') fs.chmodSync(updateLayout.binPath, '755');
         // 清理临时目录（即使失败也不影响更新）
         try {
             fs.rmSync(tempDir, { recursive: true, force: true });
@@ -4384,7 +4425,8 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
             const config = generateXrayConfig(upstreamProxy, localPort, chainedPreProxy, profile.fingerprint);
             fs.writeJsonSync(xrayConfigPath, config);
             logFd = fs.openSync(xrayLogPath, 'a');
-            xrayProcess = spawn(BIN_PATH, ['-c', xrayConfigPath], { cwd: BIN_DIR, env: { ...process.env, 'XRAY_LOCATION_ASSET': RESOURCES_BIN }, stdio: ['ignore', logFd, logFd], windowsHide: true });
+            const xrayLayout = requireXrayLaunchLayout();
+            xrayProcess = spawn(xrayLayout.binPath, ['-c', xrayConfigPath], { cwd: xrayLayout.binDir, env: { ...process.env, 'XRAY_LOCATION_ASSET': xrayLayout.assetDir }, stdio: ['ignore', logFd, logFd], windowsHide: true });
             const earlyExit = new Promise((_, reject) => {
                 const onError = (err) => reject(err);
                 const onExit = (code, signal) => reject(new Error(`Xray exited before ready: ${code ?? signal ?? 'unknown'}`));
@@ -4972,7 +5014,7 @@ app.on('window-all-closed', () => {
 });
 // Helpers (Same)
 function fetchJson(url) { return new Promise((resolve, reject) => { const req = https.get(url, { headers: { 'User-Agent': 'GeekEZ-Browser' } }, (res) => { let data = ''; res.on('data', c => data += c); res.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { reject(e); } }); }); req.on('error', reject); }); }
-function getLocalXrayVersion() { return new Promise((resolve) => { if (!fs.existsSync(BIN_PATH)) return resolve('v0.0.0'); try { const proc = spawn(BIN_PATH, ['-version']); let output = ''; proc.stdout.on('data', d => output += d.toString()); proc.on('close', () => { const match = output.match(/Xray\s+v?(\d+\.\d+\.\d+)/i); resolve(match ? (match[1].startsWith('v') ? match[1] : 'v' + match[1]) : 'v0.0.0'); }); proc.on('error', () => resolve('v0.0.0')); } catch (e) { resolve('v0.0.0'); } }); }
+function getLocalXrayVersion() { return new Promise((resolve) => { const layout = getXrayLaunchLayout(); if (!layout) return resolve('v0.0.0'); try { const proc = spawn(layout.binPath, ['-version'], { cwd: layout.binDir, env: { ...process.env, 'XRAY_LOCATION_ASSET': layout.assetDir } }); let output = ''; proc.stdout.on('data', d => output += d.toString()); proc.on('close', () => { const match = output.match(/Xray\s+v?(\d+\.\d+\.\d+)/i); resolve(match ? (match[1].startsWith('v') ? match[1] : 'v' + match[1]) : 'v0.0.0'); }); proc.on('error', () => resolve('v0.0.0')); } catch (e) { resolve('v0.0.0'); } }); }
 function compareVersions(v1, v2) { const p1 = v1.split('.').map(Number); const p2 = v2.split('.').map(Number); for (let i = 0; i < 3; i++) { if ((p1[i] || 0) > (p2[i] || 0)) return 1; if ((p1[i] || 0) < (p2[i] || 0)) return -1; } return 0; }
 function downloadFile(url, dest, onProgress) {
     return new Promise((resolve, reject) => {
@@ -5022,30 +5064,15 @@ function downloadFile(url, dest, onProgress) {
 }
 function extractZip(zipPath, destDir) {
     return new Promise((resolve, reject) => {
-        if (os.platform() === 'win32') {
-            // Windows: 使用 adm-zip（可靠）
-            try {
-                const AdmZip = require('adm-zip');
-                const zip = new AdmZip(zipPath);
-                zip.extractAllTo(destDir, true);
-                console.log('[Extract Success] Extracted to:', destDir);
-                resolve();
-            } catch (err) {
-                console.error('[Extract Error]', err);
-                reject(err);
-            }
-        } else {
-            // macOS/Linux: 使用原生 unzip 命令
-            exec(`unzip -o "${zipPath}" -d "${destDir}"`, (err, stdout, stderr) => {
-                if (err) {
-                    console.error('[Extract Error]', err);
-                    console.error('[Extract stderr]', stderr);
-                    reject(err);
-                } else {
-                    console.log('[Extract Success]', stdout);
-                    resolve();
-                }
-            });
+        try {
+            const AdmZip = require('adm-zip');
+            const zip = new AdmZip(zipPath);
+            zip.extractAllTo(destDir, true);
+            console.log('[Extract Success] Extracted to:', destDir);
+            resolve();
+        } catch (err) {
+            console.error('[Extract Error]', err);
+            reject(err);
         }
     });
 }

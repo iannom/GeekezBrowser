@@ -12,7 +12,8 @@
     "postinstall": "node setup.js --postinstall",
     "build:win": "npm run build && electron-builder --win",
     "build:mac": "npm run build && electron-builder --mac",
-    "build:linux": "npm run build && electron-builder --linux"
+    "verify:linux-resources": "node scripts/verify-linux-resources.js",
+    "build:linux": "npm run build && npm run verify:linux-resources && electron-builder --linux"
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"

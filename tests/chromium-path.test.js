@@ -26,6 +26,7 @@ test('resolveChromiumPath finds the bundled Linux Chrome binary', (t) => {
     const resolved = resolveChromiumPath({
         basePath,
         platform: 'linux',
+        arch: 'x64',
         env: { PATH: path.join(tempRoot, 'bin') }
     });
 
@@ -42,6 +43,28 @@ test('resolveChromiumPath falls back to PATH on Linux when no bundled browser ex
     const resolved = resolveChromiumPath({
         basePath: path.join(tempRoot, 'missing-puppeteer'),
         platform: 'linux',
+        arch: 'x64',
+        env: { PATH: binDir }
+    });
+
+    assert.equal(resolved, pathChrome);
+});
+
+test('Linux ARM64 跳过 bundled Chrome 并回退到 PATH', (t) => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'chromium-path-'));
+    t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+
+    const basePath = path.join(tempRoot, 'puppeteer');
+    makeExecutable(
+        path.join(basePath, 'chrome', 'linux-147.0.7727.50', 'chrome-linux64', 'chrome')
+    );
+    const binDir = path.join(tempRoot, 'bin');
+    const pathChrome = makeExecutable(path.join(binDir, 'chromium'));
+
+    const resolved = resolveChromiumPath({
+        basePath,
+        platform: 'linux',
+        arch: 'arm64',
         env: { PATH: binDir }
     });
 

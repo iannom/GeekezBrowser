@@ -139,9 +139,13 @@ function listStandardChromiumCandidates(platform = process.platform, env = proce
     ].filter(Boolean);
 }
 
-function resolveChromiumPath({ basePath, platform = process.platform, env = process.env } = {}) {
-    const bundledPath = findBundledChromiumPath(basePath, platform);
-    if (bundledPath) return bundledPath;
+function resolveChromiumPath({ basePath, platform = process.platform, arch = process.arch, env = process.env } = {}) {
+    const targetArch = env.GEEKEZ_TARGET_ARCH || env.npm_config_arch || arch;
+    const skipBundled = platform === 'linux' && targetArch === 'arm64';
+    if (!skipBundled) {
+        const bundledPath = findBundledChromiumPath(basePath, platform);
+        if (bundledPath) return bundledPath;
+    }
 
     for (const candidate of listExplicitChromiumCandidates(env)) {
         if (isExecutableFile(candidate, platform)) return candidate;
@@ -157,9 +161,9 @@ function resolveChromiumPath({ basePath, platform = process.platform, env = proc
     return null;
 }
 
-function getChromiumPath({ isDev, appPath, resourcesPath, platform = process.platform, env = process.env } = {}) {
+function getChromiumPath({ isDev, appPath, resourcesPath, platform = process.platform, arch = process.arch, env = process.env } = {}) {
     const basePath = isDev ? path.join(appPath, 'resources', 'puppeteer') : path.join(resourcesPath, 'puppeteer');
-    return resolveChromiumPath({ basePath, platform, env });
+    return resolveChromiumPath({ basePath, platform, arch, env });
 }
 
 module.exports = {

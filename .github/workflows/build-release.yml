@@ -23,37 +23,43 @@ jobs:
             os: darwin
             arch: arm64
             xray_asset: Xray-macos-arm64-v8a.zip
+            chrome_bundle: true
             build_cmd: npm run build:mac
           # macOS x64
           - platform: macos-15-intel
             os: darwin
             arch: x64
             xray_asset: Xray-macos-64.zip
+            chrome_bundle: true
             build_cmd: npm run build:mac
           # Windows x64
           - platform: windows-latest
             os: win32
             arch: x64
             xray_asset: Xray-windows-64.zip
+            chrome_bundle: true
             build_cmd: npm run build && npx electron-builder --win nsis zip --x64
           # Windows ARM64
           - platform: windows-latest
             os: win32
             arch: arm64
             xray_asset: Xray-windows-arm64-v8a.zip
+            chrome_bundle: true
             build_cmd: npm run build && npx electron-builder --win nsis zip --arm64
           # Linux x64
           - platform: ubuntu-latest
             os: linux
             arch: x64
             xray_asset: Xray-linux-64.zip
+            chrome_bundle: true
             build_cmd: npm run build:linux
           # Linux ARM64
           - platform: ubuntu-24.04-arm
             os: linux
             arch: arm64
             xray_asset: Xray-linux-arm64-v8a.zip
-            build_cmd: npm run build && npx electron-builder --linux --arm64
+            chrome_bundle: false
+            build_cmd: npm run build && npm run verify:linux-resources -- --arch=arm64 && npx electron-builder --linux --arm64
 
     runs-on: ${{ matrix.platform }}
     
@@ -67,28 +73,16 @@ jobs:
       
       - run: npm ci --ignore-scripts
 
-      - name: Get Xray version
-        id: xray
-        shell: bash
-        run: |
-          RESPONSE=$(curl -sL "https://api.github.com/repos/XTLS/Xray-core/releases/latest")
-          VER=$(echo "$RESPONSE" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('tag_name',''))" 2>/dev/null || echo "")
-          [ -z "$VER" ] && VER="${{ env.XRAY_FALLBACK_VERSION }}"
-          echo "version=$VER" >> $GITHUB_OUTPUT
-
       - name: Download Xray
-        shell: bash
-        run: |
-          BIN_DIR="resources/bin/${{ matrix.os }}-${{ matrix.arch }}"
-          mkdir -p "$BIN_DIR"
-          curl -sL -o xray.zip "https://github.com/XTLS/Xray-core/releases/download/${{ steps.xray.outputs.version }}/${{ matrix.xray_asset }}"
-          unzip -o xray.zip -d "$BIN_DIR/" && rm xray.zip
-          mv "$BIN_DIR/geoip.dat" "$BIN_DIR/geosite.dat" resources/bin/ 2>/dev/null || true
-          rm -f "$BIN_DIR"/{LICENSE,README.md}
-          [ "${{ matrix.os }}" != "win32" ] && chmod +x "$BIN_DIR/xray" || true
+        run: node scripts/prepare-xray-resource.js --platform=${{ matrix.os }} --arch=${{ matrix.arch }} --asset=${{ matrix.xray_asset }}
 
       - name: Download Chrome
+        if: matrix.chrome_bundle != false
         run: npx @puppeteer/browsers install chrome@147.0.7727.50 --path resources/puppeteer
+
+      - name: Prepare empty Chrome resource directory
+        if: matrix.chrome_bundle == false
+        run: mkdir -p resources/puppeteer
 
       - name: Build
         run: ${{ matrix.build_cmd }}
