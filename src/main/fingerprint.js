@@ -594,6 +594,18 @@ function resolveUaMode(mode) {
     return mode === 'none' ? 'none' : 'spoof';
 }
 
+function resolveServiceWorkerMode(mode) {
+    const value = String(mode || '').trim().toLowerCase();
+    if (['isolate', 'disable', 'disabled', 'block', 'bypass'].includes(value)) return 'isolate';
+    return 'allow';
+}
+
+function resolveWebgpuMode(mode) {
+    const value = String(mode || '').trim().toLowerCase();
+    if (['disable', 'disabled', 'block', 'off'].includes(value)) return 'disable';
+    return 'allow';
+}
+
 function resolveBrowserMajorVersion(major) {
     const parsed = asNumber(major);
     if (parsed && parsed >= 100 && parsed <= 200) return Math.floor(parsed);
@@ -767,6 +779,8 @@ function generateFingerprint(options = {}) {
     const runtimePlatform = resolveRuntimePlatform(options.platform);
     const platformValues = getPlatformValues(runtimePlatform);
     const uaMode = resolveUaMode(options.uaMode);
+    const serviceWorkerMode = resolveServiceWorkerMode(options.serviceWorkerMode);
+    const webgpuMode = resolveWebgpuMode(options.webgpuMode);
 
     const resolvedBrowserType = resolveBrowserType(options.browserType);
     const resolvedBrowserMajorVersion = resolveBrowserMajorVersion(options.browserMajorVersion);
@@ -833,7 +847,9 @@ function generateFingerprint(options = {}) {
         secChUa: userAgentMetadata ? buildSecChUa(userAgentMetadata.brands) : '',
         tlsClientHello,
         webgl,
-        webglProfile: webgl?.profileId || 'none'
+        webglProfile: webgl?.profileId || 'none',
+        serviceWorkerMode,
+        webgpuMode
     };
 
     return fingerprint;
@@ -1756,8 +1772,10 @@ function getInjectScript(fp, profileName, watermarkStyle) {
             }
 
             // --- 7.3 Service Worker isolation ---
-            // Service Worker 运行在页面注入脚本之外，可能暴露宿主 UA 和平台。
-            // 模拟环境内隐藏注册接口，避免页面查询未打补丁的 Worker。
+            // 默认保留真实 Service Worker 行为；仅在显式隔离模式下隐藏未打补丁的 Worker。
+            const serviceWorkerMode = String(fp.serviceWorkerMode || 'allow').toLowerCase();
+            const shouldIsolateServiceWorker = ['isolate', 'disable', 'disabled', 'block', 'bypass'].includes(serviceWorkerMode);
+            if (shouldIsolateServiceWorker) {
             try {
                 const makeServiceWorkerError = () => {
                     try {
@@ -1818,6 +1836,7 @@ function getInjectScript(fp, profileName, watermarkStyle) {
                     configurable: true
                 });
             } catch (e) { }
+            }
 
             // --- 8. WebRTC protection ---
             if (window.RTCPeerConnection) {

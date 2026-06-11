@@ -12,7 +12,10 @@ const os = require('os');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const { promisify } = require('util');
-const { getChromiumPath: resolveChromiumPathForApp } = require('./chromium-path');
+const {
+    getChromiumPath: resolveChromiumPathForApp,
+    describeChromiumResolutionFailure
+} = require('./chromium-path');
 const { CLOSE_BEHAVIOR, normalizeCloseBehavior, resolveCloseBehavior } = require('./close-behavior');
 const { resolveXrayAssetName } = require('./xray-assets');
 const { getPlatformArch, resolveXrayLaunchLayout, resolveXrayUpdateLayout } = require('./xray-runtime');
@@ -1238,6 +1241,8 @@ function normalizeFingerprintOptions(data = {}) {
         language: firstDefined(data.language, inputFp.language),
         languages: firstDefined(data.languages, inputFp.languages),
         platform: firstDefined(data.platform, inputFp.platform),
+        serviceWorkerMode: firstDefined(data.serviceWorkerMode, inputFp.serviceWorkerMode),
+        webgpuMode: firstDefined(data.webgpuMode, inputFp.webgpuMode),
         hardwareConcurrency: firstDefined(data.hardwareConcurrency, inputFp.hardwareConcurrency),
         deviceMemory: firstDefined(data.deviceMemory, inputFp.deviceMemory),
         canvasNoise: firstDefined(data.canvasNoise, inputFp.canvasNoise),
@@ -1343,6 +1348,16 @@ function registerGeolocationPermissionReplay(browser, page, session, geolocation
 
 function shouldDisableSessionRestoreForFingerprint(fingerprint = {}) {
     return fingerprint.uaMode !== 'none' && !!fingerprint.userAgentMetadata;
+}
+
+function shouldIsolateServiceWorkerForFingerprint(fingerprint = {}) {
+    const mode = String(fingerprint.serviceWorkerMode || 'allow').trim().toLowerCase();
+    return ['isolate', 'disable', 'disabled', 'block', 'bypass'].includes(mode);
+}
+
+function shouldDisableWebgpuForFingerprint(fingerprint = {}) {
+    const mode = String(fingerprint.webgpuMode || 'allow').trim().toLowerCase();
+    return ['disable', 'disabled', 'block', 'off'].includes(mode);
 }
 
 async function allocateDebugPortIfNeeded(settings, profiles, requestedPort) {
@@ -4495,9 +4510,11 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
         const disabledFeatures = [
             'IsolateOrigins',
             'site-per-process',
-            'ExtensionsMenuAccessControl',
-            'WebGPU'
+            'ExtensionsMenuAccessControl'
         ];
+        if (shouldDisableWebgpuForFingerprint(profile.fingerprint)) {
+            disabledFeatures.push('WebGPU');
+        }
         if (process.platform === 'win32') {
             disabledFeatures.push('StartupLaunch', 'StartupBoost');
         }
@@ -4572,7 +4589,11 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
             if (xrayProcess && xrayProcess.pid) {
                 await forceKill(xrayProcess.pid);
             }
-            throw new Error("Chrome binary not found.");
+            throw new Error(describeChromiumResolutionFailure({
+                platform: process.platform,
+                arch: process.arch,
+                env: process.env
+            }));
         }
 
         // 时区设置
@@ -4706,6 +4727,7 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
         const applyPageOverrides = async (page) => {
             if (!page) return;
             try {
+                const shouldBypassServiceWorker = shouldIsolateServiceWorkerForFingerprint(profile.fingerprint);
                 try {
                     await page.evaluateOnNewDocument(fingerprintInjectScript);
                 } catch (e) { }
@@ -4719,10 +4741,12 @@ const launchProfileHandler = async (event, profileId, watermarkStyle) => {
                     await session.send('Page.addScriptToEvaluateOnNewDocument', { source: webglOverrideScript });
                 } catch (e) { }
                 try { await session.send('Network.enable'); } catch (e) { }
-                try {
-                    await session.send('Network.setBypassServiceWorker', { bypass: true });
-                } catch (e) {
-                    console.warn('Service Worker bypass failed:', e.message || e);
+                if (shouldBypassServiceWorker) {
+                    try {
+                        await session.send('Network.setBypassServiceWorker', { bypass: true });
+                    } catch (e) {
+                        console.warn('Service Worker bypass failed:', e.message || e);
+                    }
                 }
 
                 const hardwareConcurrency = Number(profile.fingerprint?.hardwareConcurrency);

@@ -63,7 +63,8 @@
 *   **Windows**: `GeekEZ-Browser-{version}-win-x64.exe`
 *   **macOS (ARM64)**: `GeekEZ-Browser-{version}-mac-arm64.dmg`
 *   **macOS (Intel)**: `GeekEZ-Browser-{version}-mac-x64.dmg`
-*   **Linux**: `GeekEZ-Browser-{version}-linux-x64.AppImage`
+*   **Linux AppImage**: `GeekEZ-Browser-{version}-linux-x64.AppImage`
+*   **Linux DEB**: `GeekEZ-Browser-{version}-linux-amd64.deb`
 
 ### 方法 2: 源码运行
 

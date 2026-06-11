@@ -4,7 +4,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { resolveChromiumPath } = require('../src/main/chromium-path');
+const {
+    resolveChromiumPath,
+    describeChromiumResolutionFailure
+} = require('../src/main/chromium-path');
 
 function makeExecutable(filePath) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -69,4 +72,19 @@ test('Linux ARM64 跳过 bundled Chrome 并回退到 PATH', (t) => {
     });
 
     assert.equal(resolved, pathChrome);
+});
+
+test('Linux ARM64 缺少系统 Chrome 时返回明确安装指引', () => {
+    const resolved = resolveChromiumPath({
+        basePath: path.join(os.tmpdir(), 'missing-puppeteer'),
+        platform: 'linux',
+        arch: 'arm64',
+        env: { PATH: '' }
+    });
+
+    assert.equal(resolved, null);
+    assert.match(
+        describeChromiumResolutionFailure({ platform: 'linux', arch: 'arm64', env: { PATH: '' } }),
+        /Linux ARM64 packages do not include bundled Chrome/
+    );
 });

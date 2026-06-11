@@ -146,6 +146,35 @@ test('页面水印默认关闭，不再隐式注入 DOM 标识', () => {
     assert.doesNotMatch(script, /const style = watermarkStyle \|\| 'enhanced'/);
 });
 
+test('Service Worker 和 WebGPU 默认保持真实环境兼容性', () => {
+    const fingerprint = generateFingerprint({
+        uaMode: 'spoof',
+        platform: 'Linux x86_64',
+        browserType: 'chrome',
+        browserMajorVersion: 147
+    });
+    const script = getInjectScript(fingerprint, 'Linux Profile', 'none');
+    const indexSource = fs.readFileSync(path.join(__dirname, '..', 'src/main/index.js'), 'utf8');
+
+    assert.equal(fingerprint.serviceWorkerMode, 'allow');
+    assert.equal(fingerprint.webgpuMode, 'allow');
+    assert.match(script, /const shouldIsolateServiceWorker = \['isolate', 'disable', 'disabled', 'block', 'bypass'\]\.includes\(serviceWorkerMode\)/);
+    assert.match(indexSource, /if \(shouldDisableWebgpuForFingerprint\(profile\.fingerprint\)\) \{\s*disabledFeatures\.push\('WebGPU'\)/);
+    assert.match(indexSource, /if \(shouldBypassServiceWorker\) \{\s*try \{\s*await session\.send\('Network\.setBypassServiceWorker'/);
+});
+
+test('显式隔离模式仍可禁用 Service Worker 和 WebGPU', () => {
+    const fingerprint = generateFingerprint({
+        serviceWorkerMode: 'isolate',
+        webgpuMode: 'disable'
+    });
+    const script = getInjectScript(fingerprint, 'Strict Profile', 'none');
+
+    assert.equal(fingerprint.serviceWorkerMode, 'isolate');
+    assert.equal(fingerprint.webgpuMode, 'disable');
+    assert.match(script, /Service Worker is disabled in this profile/);
+});
+
 test('注入脚本必须保持可解析，避免运行时整体失效', () => {
     const script = getInjectScript(generateFingerprint({
         uaMode: 'spoof',
@@ -294,25 +323,7 @@ test('真实 Chromium smoke：环境模拟覆盖实际运行时', {
         userAgent: navigator.userAgent,
         platform: navigator.platform,
         hardwareConcurrency: navigator.hardwareConcurrency,
-        serviceWorker: await (async () => {
-            const container = navigator.serviceWorker;
-            if (!container) return { available: false };
-            try {
-                await container.register('/sw.js');
-                return { available: true, registered: true };
-            } catch (err) {
-                const registrations = typeof container.getRegistrations === 'function'
-                    ? await container.getRegistrations()
-                    : [];
-                return {
-                    available: true,
-                    registered: false,
-                    errorName: err && err.name,
-                    controller: container.controller,
-                    registrationCount: registrations.length
-                };
-            }
-        })(),
+        serviceWorkerAvailable: !!navigator.serviceWorker,
         brands: navigator.userAgentData ? Array.from(navigator.userAgentData.brands) : [],
         innerWidth: window.innerWidth,
         innerHeight: window.innerHeight,
@@ -333,13 +344,7 @@ test('真实 Chromium smoke：环境模拟覆盖实际运行时', {
     assert.equal(runtime.platform, fingerprint.platform);
     assert.equal(runtime.hardwareConcurrency, fingerprint.hardwareConcurrency);
     assert.notEqual(canvasDataUrl, nativeCanvasDataUrl);
-    assert.deepEqual(runtime.serviceWorker, {
-        available: true,
-        registered: false,
-        errorName: 'SecurityError',
-        controller: null,
-        registrationCount: 0
-    });
+    assert.equal(runtime.serviceWorkerAvailable, true);
     assert.match(requestHeaders['sec-ch-ua'] || '', /"Google Chrome";v="147"/);
     assert.equal(requestHeaders['sec-ch-ua-platform'], `"${fingerprint.userAgentMetadata.platform}"`);
     if (runtime.brands.length > 0) {

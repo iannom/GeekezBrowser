@@ -139,6 +139,19 @@ function listStandardChromiumCandidates(platform = process.platform, env = proce
     ].filter(Boolean);
 }
 
+function describeChromiumResolutionFailure({ platform = process.platform, arch = process.arch, env = process.env } = {}) {
+    if (platform === 'linux' && arch === 'arm64') {
+        return 'Chrome binary not found. Linux ARM64 packages do not include bundled Chrome; install google-chrome/chromium or set CHROME_PATH/CHROMIUM_PATH to an executable browser.';
+    }
+    if (platform === 'linux') {
+        return 'Chrome binary not found. Run resource setup to download bundled Chrome, install google-chrome/chromium, or set CHROME_PATH/CHROMIUM_PATH.';
+    }
+    const explicit = listExplicitChromiumCandidates(env).filter(Boolean).join(', ');
+    return explicit
+        ? `Chrome binary not found. Checked explicit browser path(s): ${explicit}`
+        : 'Chrome binary not found.';
+}
+
 function resolveChromiumPath({ basePath, platform = process.platform, arch = process.arch, env = process.env } = {}) {
     const targetArch = env.GEEKEZ_TARGET_ARCH || env.npm_config_arch || arch;
     const skipBundled = platform === 'linux' && targetArch === 'arm64';
@@ -168,5 +181,6 @@ function getChromiumPath({ isDev, appPath, resourcesPath, platform = process.pla
 
 module.exports = {
     getChromiumPath,
-    resolveChromiumPath
+    resolveChromiumPath,
+    describeChromiumResolutionFailure
 };

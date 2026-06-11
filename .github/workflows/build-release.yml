@@ -84,6 +84,12 @@ jobs:
         if: matrix.chrome_bundle == false
         run: mkdir -p resources/puppeteer
 
+      - name: Run Linux Chromium smoke
+        if: matrix.os == 'linux' && matrix.arch == 'x64'
+        run: npm test
+        env:
+          GEEKEZ_CHROMIUM_SMOKE: '1'
+
       - name: Build
         run: ${{ matrix.build_cmd }}
         env:
@@ -109,6 +115,7 @@ jobs:
             dist/*.exe
             dist/*.zip
             dist/*.AppImage
+            dist/*.deb
 
   release:
     needs: build
@@ -130,6 +137,7 @@ jobs:
             artifacts/**/*.exe
             artifacts/**/*.zip
             artifacts/**/*.AppImage
+            artifacts/**/*.deb
           generate_release_notes: true
           draft: false
           prerelease: false

@@ -111,7 +111,11 @@
       }
     },
     "linux": {
-      "target": "AppImage",
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "maintainer": "EchoHS",
       "icon": "src/renderer/icon.png"
     }
   },
