@@ -152,7 +152,7 @@
                                 <div class="toggle-switch" style="position:relative; width:44px; height:24px; flex-shrink:0;">
                                     <input type="checkbox" :checked="settingsStore.enableUaWebglModify"
                                         style="opacity:0; width:0; height:0; position:absolute;"
-                                        @change="e => settingsStore.toggleUaWebglModify(e.target.checked)">
+                                        @change="e => handleSettingToggle('toggleUaWebglModify', e.target.checked)">
                                     <div class="toggle-track" :style="{ background: settingsStore.enableUaWebglModify ? 'var(--accent)' : 'var(--border)' }"
                                         style="position:absolute; inset:0; border-radius:12px; transition:0.3s;">
                                     </div>
@@ -177,7 +177,7 @@
                                 <div class="toggle-switch" style="position:relative; width:44px; height:24px; flex-shrink:0;">
                                     <input type="checkbox" :checked="settingsStore.enableRemoteDebugging"
                                         style="opacity:0; width:0; height:0; position:absolute;"
-                                        @change="e => settingsStore.toggleRemoteDebugging(e.target.checked)">
+                                        @change="e => handleSettingToggle('toggleRemoteDebugging', e.target.checked)">
                                     <div class="toggle-track" :style="{ background: settingsStore.enableRemoteDebugging ? 'var(--accent)' : 'var(--border)' }"
                                         style="position:absolute; inset:0; border-radius:12px; transition:0.3s;">
                                     </div>
@@ -200,7 +200,7 @@
                                 <div class="toggle-switch" style="position:relative; width:44px; height:24px; flex-shrink:0;">
                                     <input type="checkbox" :checked="settingsStore.enableCustomArgs"
                                         style="opacity:0; width:0; height:0; position:absolute;"
-                                        @change="e => settingsStore.toggleCustomArgs(e.target.checked)">
+                                        @change="e => handleSettingToggle('toggleCustomArgs', e.target.checked)">
                                     <div class="toggle-track" :style="{ background: settingsStore.enableCustomArgs ? 'var(--accent)' : 'var(--border)' }"
                                         style="position:absolute; inset:0; border-radius:12px; transition:0.3s;">
                                     </div>
@@ -223,7 +223,7 @@
                                 <div class="toggle-switch" style="position:relative; width:44px; height:24px; flex-shrink:0;">
                                     <input type="checkbox" :checked="settingsStore.enableApiServer"
                                         style="opacity:0; width:0; height:0; position:absolute;"
-                                        @change="e => settingsStore.toggleApiServer(e.target.checked)">
+                                        @change="e => handleApiServerToggle(e.target.checked)">
                                     <div class="toggle-track" :style="{ background: settingsStore.enableApiServer ? 'var(--accent)' : 'var(--border)' }"
                                         style="position:absolute; inset:0; border-radius:12px; transition:0.3s;">
                                     </div>
@@ -254,6 +254,13 @@
                                         style="font-size:11px; color:var(--accent); margin-left:auto;"
                                         data-i18n="apiDocs">📄 Docs</a>
                                 </div>
+                                <div v-if="settingsStore.apiToken" style="display:flex; align-items:center; gap:8px; margin-top:10px; flex-wrap:wrap;">
+                                    <span style="font-size:11px; color:var(--text-secondary);" data-i18n="apiToken">{{ $t('apiToken') }}</span>
+                                    <code style="font-size:11px; color:var(--accent); word-break:break-all;">{{ settingsStore.apiToken }}</code>
+                                    <button class="outline" @click="handleCopyApiToken" style="padding:5px 10px; font-size:11px;" data-i18n="apiTokenCopy">
+                                        {{ $t('apiTokenCopy') }}
+                                    </button>
+                                </div>
                             </div>
 
                             <div style="height:1px; background:var(--border); margin:0 16px;"></div>
@@ -267,7 +274,7 @@
                                 <div style="margin-top:8px;">
                                     <select :value="settingsStore.closeBehavior"
                                         style="width:100%; max-width:260px; margin:0; font-size:12px; padding:7px 10px;"
-                                        @change="(e) => settingsStore.setCloseBehavior(e.target.value)">
+                                        @change="(e) => handleCloseBehaviorChange(e.target.value)">
                                         <option value="tray" data-i18n="closeBehaviorTray">{{ $t('closeBehaviorTray') }}</option>
                                         <option value="quit" data-i18n="closeBehaviorQuit">{{ $t('closeBehaviorQuit') }}</option>
                                     </select>
@@ -291,7 +298,7 @@
                                 <input type="radio" name="watermarkStyle" value="none"
                                     style="margin-top:3px; width:auto; cursor:pointer;"
                                     :checked="settingsStore.watermarkStyle === 'none'"
-                                    @change="settingsStore.saveWatermarkStyle('none')">
+                                    @change="handleWatermarkStyleChange('none')">
                                 <div style="flex:1;">
                                     <div style="font-weight:bold; margin-bottom:5px; color:var(--text-primary);"
                                         data-i18n="watermarkNoneLabel">
@@ -310,7 +317,7 @@
                                 <input type="radio" name="watermarkStyle" value="enhanced"
                                     style="margin-top:3px; width:auto; cursor:pointer;"
                                     :checked="settingsStore.watermarkStyle === 'enhanced'"
-                                    @change="settingsStore.saveWatermarkStyle('enhanced')">
+                                    @change="handleWatermarkStyleChange('enhanced')">
                                 <div style="flex:1;">
                                     <div style="font-weight:bold; margin-bottom:5px; color:var(--text-primary);"
                                         data-i18n="watermarkEnhancedLabel">
@@ -329,7 +336,7 @@
                                 <input type="radio" name="watermarkStyle" value="banner"
                                     style="margin-top:3px; width:auto; cursor:pointer;"
                                     :checked="settingsStore.watermarkStyle === 'banner'"
-                                    @change="settingsStore.saveWatermarkStyle('banner')">
+                                    @change="handleWatermarkStyleChange('banner')">
                                 <div style="flex:1;">
                                     <div style="font-weight:bold; margin-bottom:5px; color:var(--text-primary);"
                                         data-i18n="watermarkBannerLabel">
@@ -429,6 +436,12 @@ onMounted(async () => {
     await settingsStore.loadSettings();
     await loadProfileOptions();
     await handleSearchStore();
+});
+
+watch(() => uiStore.settingsModalVisible, async (visible) => {
+    if (!visible) return;
+    await settingsStore.loadSettings();
+    await loadProfileOptions();
 });
 
 watch(() => settingsStore.apiPort, (newVal) => {
@@ -614,13 +627,63 @@ const toggleProfileCard = async (ext, profileId) => {
     }
 };
 
+const showSettingSaveError = (e) => {
+    uiStore.showAlert((window.t('settingSaveFailed') || 'Failed to save setting: ') + (e?.message || e));
+};
+
+const handleSettingToggle = async (actionName, checked) => {
+    try {
+        await settingsStore[actionName](checked);
+    } catch (e) {
+        showSettingSaveError(e);
+    }
+};
+
+const handleApiServerToggle = async (checked) => {
+    try {
+        await settingsStore.toggleApiServer(checked);
+        uiStore.showAlert(checked ? window.t('apiStarted') : window.t('apiStopped'));
+    } catch (e) {
+        showSettingSaveError(e);
+    }
+};
+
+const handleCloseBehaviorChange = async (mode) => {
+    try {
+        await settingsStore.setCloseBehavior(mode);
+    } catch (e) {
+        showSettingSaveError(e);
+    }
+};
+
+const handleWatermarkStyleChange = async (style) => {
+    try {
+        await settingsStore.saveWatermarkStyle(style);
+    } catch (e) {
+        showSettingSaveError(e);
+    }
+};
+
+const handleCopyApiToken = async () => {
+    try {
+        await navigator.clipboard.writeText(settingsStore.apiToken || '');
+        uiStore.showAlert(window.t('apiTokenCopied') || 'API token copied');
+    } catch (e) {
+        uiStore.showAlert((window.t('saveFailed') || 'Copy failed') + ': ' + (e?.message || e));
+    }
+};
+
 const handleSaveApiPort = async () => {
     if (tempApiPort.value < 1024 || tempApiPort.value > 65535) {
         uiStore.showAlert(window.t('apiPortInvalid'));
         return;
     }
-    await settingsStore.saveApiPort(tempApiPort.value);
-    uiStore.showAlert(window.t('apiPortSaved'));
+    try {
+        await settingsStore.saveApiPort(tempApiPort.value);
+        uiStore.showAlert(window.t('apiPortSaved'));
+    } catch (e) {
+        showSettingSaveError(e);
+    }
 };
 
 const handleOpenApiDocs = () => {
@@ -631,28 +694,42 @@ const handleSelectDataDirectory = async () => {
     const path = await settingService.selectDataDirectory();
     if (!path) return;
 
-    uiStore.showConfirm(window.t('dataPathConfirmMigrate'), async () => {
-        uiStore.showAlert(window.t('dataPathMigrating'), false);
+    const applyDataDirectory = async (migrate) => {
+        if (migrate) {
+            uiStore.showAlert(window.t('dataPathMigrating'), false);
+        }
         try {
-            const res = await settingService.setDataDirectory(path, true);
+            const res = await settingService.setDataDirectory(path, migrate);
             if (res.success) {
                 showRestartWarning.value = true;
                 uiStore.showAlert(window.t('dataPathSuccess'));
             } else {
-                uiStore.showAlert(window.t('dataPathError') + res.error);
+                uiStore.showAlert(window.t('dataPathError') + (res.error || 'Unknown error'));
             }
         } catch (e) {
-            uiStore.showAlert(window.t('dataPathError') + e.message);
+            uiStore.showAlert(window.t('dataPathError') + (e?.message || e));
         }
+    };
+
+    uiStore.showConfirm(window.t('dataPathConfirmMigrate'), async () => {
+        await applyDataDirectory(true);
+    }, '', async () => {
+        await applyDataDirectory(false);
     });
 };
 
 const handleResetDataDirectory = async () => {
     uiStore.showConfirm(window.t('dataPathConfirmReset'), async () => {
-        const res = await settingService.resetDataDirectory();
-        if (res.success) {
-            showRestartWarning.value = true;
-            uiStore.showAlert(window.t('dataPathResetSuccess'));
+        try {
+            const res = await settingService.resetDataDirectory();
+            if (res.success) {
+                showRestartWarning.value = true;
+                uiStore.showAlert(window.t('dataPathResetSuccess'));
+            } else {
+                uiStore.showAlert(window.t('dataPathError') + (res.error || 'Unknown error'));
+            }
+        } catch (e) {
+            uiStore.showAlert(window.t('dataPathError') + (e?.message || e));
         }
     });
 };

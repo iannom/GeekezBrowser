@@ -119,12 +119,12 @@ const toggleProfile = (id) => {
 };
 
 const confirmExport = async () => {
-    if (selectedIds.value.size === 0) {
+    const type = uiStore.exportType;
+    if (type !== 'proxies' && selectedIds.value.size === 0) {
         uiStore.showAlert(t('expNoProfiles') || 'No profiles selected');
         return;
     }
 
-    const type = uiStore.exportType;
     const ids = Array.from(selectedIds.value);
 
     if (type === 'full-backup') {
@@ -163,7 +163,7 @@ const confirmExport = async () => {
                     if (res && res.success) {
                         uiStore.showAlert(t('msgExportSuccess') || 'Export Successful!');
                     } else if (res && !res.success) {
-                        uiStore.showAlert("Export failed: " + (res.message || 'Unknown error'));
+                        uiStore.showAlert("Export failed: " + (res.error || res.message || 'Unknown error'));
                     }
                 }, 600);
             } catch(err) {
@@ -182,8 +182,10 @@ const confirmExport = async () => {
                 uiStore.showAlert(t('msgExportSuccess') || 'Export Successful!');
                 uiStore.closeExportSelectModal();
             } else if (res && !res.success) {
-                uiStore.showAlert("Export failed: " + (res.message || 'Unknown error'));
+                uiStore.showAlert("Export failed: " + (res.error || res.message || 'Unknown error'));
             }
+        } catch (err) {
+            uiStore.showAlert("Export failed: " + (err?.message || 'Unknown error'));
         } finally {
             isExporting.value = false;
         }

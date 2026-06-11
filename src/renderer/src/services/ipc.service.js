@@ -10,8 +10,7 @@ export const ipcService = {
     async invoke(channel, ...args) {
         try {
             if (!window.electronAPI || !window.electronAPI.invoke) {
-                console.warn(`[IPC Service] window.electronAPI.invoke not ready for channel: ${channel}`);
-                return null;
+                throw new Error(`IPC bridge is not ready for channel: ${channel}`);
             }
             return await window.electronAPI.invoke(channel, ...args);
         } catch (error) {

@@ -141,6 +141,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { useUIStore } from '../store/useUIStore';
 import { useProxyStore } from '../store/useProxyStore';
+import { proxyService } from '../services/proxy.service';
 import { getProxyRemark } from '../utils/helpers';
 
 const uiStore = useUIStore();
@@ -235,12 +236,21 @@ const handleSubmitEditNode = async () => {
         uiStore.showAlert('代理链接不能为空');
         return;
     }
+    const validation = proxyService.validateProxyUrl(url);
+    if (!validation.success) {
+        uiStore.showAlert(`${window.t('invalidProxyUrl') || 'Invalid proxy URL'}: ${validation.error}`);
+        return;
+    }
 
     const remark = String(editNodeForm.value.remark || '').trim();
     target.url = url;
     target.remark = remark || getProxyRemark(url) || target.remark || 'Node';
-    await proxyStore.saveSettings();
-    closeEditNodeModal();
+    try {
+        await proxyStore.saveSettings();
+        closeEditNodeModal();
+    } catch (e) {
+        uiStore.showAlert(`${window.t('saveFailed') || 'Save failed'}: ${e?.message || e}`);
+    }
 };
 
 const handleSubmitBatch = async () => {

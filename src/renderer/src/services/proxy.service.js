@@ -5,6 +5,16 @@ import { decodeBase64Content, getProxyRemark, uuidv4 } from '../utils/helpers';
  * 代理与订阅服务 - 处理节点测试、订阅同步与数据解析
  */
 export const proxyService = {
+    validateProxyUrl(url) {
+        const value = String(url || '').trim();
+        if (!value) return { success: false, error: 'Proxy URL is required' };
+        const supportedSchemes = /^(vmess|vless|trojan|ss|socks|socks5|http|https):\/\//i;
+        if (!supportedSchemes.test(value)) {
+            return { success: false, error: 'Unsupported proxy URL format' };
+        }
+        return { success: true };
+    },
+
     /**
      * 测试单个节点的延迟
      */
@@ -62,7 +72,7 @@ export const proxyService = {
 
             lines.forEach(line => {
                 line = line.trim();
-                if (line && line.includes('://')) {
+                if (line && this.validateProxyUrl(line).success) {
                     const remark = getProxyRemark(line) || `Node ${count + 1}`;
                     newNodes.push({
                         id: uuidv4(),
@@ -75,6 +85,9 @@ export const proxyService = {
                 }
             });
 
+            if (count === 0) {
+                return { success: false, error: 'No valid proxy nodes found' };
+            }
             return { success: true, count, nodes: newNodes };
         } catch (error) {
             console.error('[Proxy Service] Sync failed:', error);

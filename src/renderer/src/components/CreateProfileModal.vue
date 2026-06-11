@@ -102,6 +102,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useUIStore } from '../store/useUIStore';
 import { useProfileStore } from '../store/useProfileStore';
+import { proxyService } from '../services/proxy.service';
 import { getProxyRemark } from '../utils/helpers';
 import {
   browserVersionPresetOptions,
@@ -297,6 +298,11 @@ async function handleSave() {
   const proxyLines = form.proxyStr.split('\n').map(l => l.trim()).filter(l => l);
   if (proxyLines.length === 0) {
     uiStore.showAlert(window.t('inputReq'));
+    return;
+  }
+  const invalidLine = proxyLines.find(line => !proxyService.validateProxyUrl(line).success);
+  if (invalidLine) {
+    uiStore.showAlert(`${window.t('invalidProxyUrl') || 'Invalid proxy URL'}: ${invalidLine}`);
     return;
   }
 

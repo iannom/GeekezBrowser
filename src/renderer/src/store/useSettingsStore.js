@@ -12,6 +12,7 @@ export const useSettingsStore = defineStore('settings', {
         apiPort: 12138,
         apiRunning: false,
         watermarkStyle: 'none',
+        apiToken: '',
         userExtensions: [],
         currentDataPath: '',
         isDefaultDataPath: true,
@@ -33,6 +34,7 @@ export const useSettingsStore = defineStore('settings', {
                 this.closeBehavior = settings.closeBehavior === 'quit' ? 'quit' : 'tray';
                 this.apiPort = settings.apiPort || 12138;
                 this.watermarkStyle = settings.watermarkStyle || 'none';
+                this.apiToken = settings.apiToken || '';
 
                 // Load API Status
                 try {
@@ -62,67 +64,87 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         async toggleRemoteDebugging(enabled) {
-            this.enableRemoteDebugging = enabled;
             const settings = await ipcService.getSettings();
             settings.enableRemoteDebugging = enabled;
             await ipcService.saveSettings(settings);
+            this.enableRemoteDebugging = enabled;
+            return true;
         },
 
         async toggleCustomArgs(enabled) {
-            this.enableCustomArgs = enabled;
             const settings = await ipcService.getSettings();
             settings.enableCustomArgs = enabled;
             await ipcService.saveSettings(settings);
+            this.enableCustomArgs = enabled;
+            return true;
         },
 
         async toggleUaWebglModify(enabled) {
-            this.enableUaWebglModify = enabled;
             const settings = await ipcService.getSettings();
             settings.enableUaWebglModify = enabled;
             await ipcService.saveSettings(settings);
+            this.enableUaWebglModify = enabled;
+            return true;
         },
 
         async toggleApiServer(enabled) {
-            this.enableApiServer = enabled;
-            const settings = await ipcService.getSettings();
-            settings.enableApiServer = enabled;
-            await ipcService.saveSettings(settings);
-
             if (enabled) {
                 const res = await settingService.startApiServer(this.apiPort);
-                this.apiRunning = res.success;
+                if (!res.success) {
+                    this.apiRunning = false;
+                    throw new Error(res.error || 'API server failed to start');
+                }
+                const settings = await ipcService.getSettings();
+                settings.enableApiServer = true;
+                await ipcService.saveSettings(settings);
+                this.enableApiServer = true;
+                this.apiRunning = true;
+                this.apiToken = res.token || settings.apiToken || this.apiToken;
             } else {
                 await settingService.stopApiServer();
+                const settings = await ipcService.getSettings();
+                settings.enableApiServer = false;
+                await ipcService.saveSettings(settings);
+                this.enableApiServer = false;
                 this.apiRunning = false;
             }
         },
 
         async setCloseBehavior(mode) {
-            this.closeBehavior = mode === 'quit' ? 'quit' : 'tray';
+            const nextMode = mode === 'quit' ? 'quit' : 'tray';
             const settings = await ipcService.getSettings();
-            settings.closeBehavior = this.closeBehavior;
+            settings.closeBehavior = nextMode;
             await ipcService.saveSettings(settings);
+            this.closeBehavior = nextMode;
         },
 
         async saveApiPort(port) {
-            this.apiPort = port;
+            const previousPort = this.apiPort;
+            const wasEnabled = this.enableApiServer;
             const settings = await ipcService.getSettings();
             settings.apiPort = port;
-            await ipcService.saveSettings(settings);
 
-            if (this.enableApiServer) {
+            if (wasEnabled) {
                 await settingService.stopApiServer();
                 const res = await settingService.startApiServer(port);
-                this.apiRunning = res.success;
+                if (!res.success) {
+                    await settingService.startApiServer(previousPort).catch(() => ({ success: false }));
+                    throw new Error(res.error || 'API server failed to start on new port');
+                }
+                this.apiRunning = true;
             }
+            await ipcService.saveSettings(settings);
+            this.apiPort = port;
+            return true;
         },
 
         async saveWatermarkStyle(style) {
-            this.watermarkStyle = style || 'none';
+            const nextStyle = style || 'none';
             const settings = await ipcService.getSettings();
-            settings.watermarkStyle = this.watermarkStyle;
-            localStorage.setItem('geekez_watermark_style', this.watermarkStyle);
+            settings.watermarkStyle = nextStyle;
             await ipcService.saveSettings(settings);
+            this.watermarkStyle = nextStyle;
+            localStorage.setItem('geekez_watermark_style', this.watermarkStyle);
         },
 
         async loadExtensions() {

@@ -83,6 +83,7 @@ const checkUpdates = async () => {
         const result = await settingService.checkUpdates();
         if (result && result.hasUpdate) {
             if (window.uiStore) {
+                window.uiStore.alertModalVisible = false;
                 window.uiStore.showConfirm(
                     `${t('appUpdateFound')} v${result.latestVersion}\n\n${t('askUpdate')}`,
                     () => { ipcService.openUrl(result.downloadUrl); }

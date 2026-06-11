@@ -81,6 +81,15 @@ export const useProxyStore = defineStore('proxy', () => {
         }
     };
 
+    const ensureValidSelectedProxy = () => {
+        if (!settings.value.selectedId) return;
+        const selected = (settings.value.preProxies || []).find(p => p.id === settings.value.selectedId && p.enable !== false);
+        if (!selected) {
+            const fallback = (settings.value.preProxies || []).find(p => p.enable !== false);
+            settings.value.selectedId = fallback ? fallback.id : null;
+        }
+    };
+
     const switchGroup = (groupId) => {
         currentGroup.value = groupId;
     };
@@ -134,12 +143,14 @@ export const useProxyStore = defineStore('proxy', () => {
             list.forEach(p => { if (p.latency > 0 && p.latency < min) { min = p.latency; best = p; } });
             if (best) {
                 settings.value.selectedId = best.id;
+                await saveSettings();
             }
         }
     };
 
     const deleteProxy = async (id) => {
         settings.value.preProxies = settings.value.preProxies.filter(p => p.id !== id);
+        if (settings.value.selectedId === id) ensureValidSelectedProxy();
         await saveSettings();
     };
 
@@ -147,11 +158,16 @@ export const useProxyStore = defineStore('proxy', () => {
         const p = settings.value.preProxies.find(x => x.id === id);
         if (p) {
             p.enable = !p.enable;
+            if (settings.value.selectedId === id && p.enable === false) ensureValidSelectedProxy();
             await saveSettings();
         }
     };
 
     const selectProxy = async (id) => {
+        const p = settings.value.preProxies.find(x => x.id === id);
+        if (!p || p.enable === false) {
+            throw new Error('Selected proxy is unavailable');
+        }
         settings.value.selectedId = id;
         await saveSettings();
     };
@@ -184,9 +200,12 @@ export const useProxyStore = defineStore('proxy', () => {
     const updateSubscription = async (subData) => {
         const idx = settings.value.subscriptions.findIndex(s => s.id === subData.id);
         if (idx !== -1) {
-            settings.value.subscriptions[idx] = { ...settings.value.subscriptions[idx], ...subData };
-            const res = await syncSub(subData.id);
-            if (res && !res.success) return res;
+            const candidate = { ...settings.value.subscriptions[idx], ...subData };
+            const res = await proxyService.syncSubscription(candidate);
+            if (!res.success) return res;
+            settings.value.subscriptions[idx] = { ...candidate, lastUpdated: Date.now() };
+            settings.value.preProxies = settings.value.preProxies.filter(p => p.groupId !== subData.id).concat(res.nodes);
+            ensureValidSelectedProxy();
             await saveSettings();
             return { success: true };
         }
@@ -196,6 +215,7 @@ export const useProxyStore = defineStore('proxy', () => {
     const deleteSub = async (subId) => {
         settings.value.subscriptions = settings.value.subscriptions.filter(s => s.id !== subId);
         settings.value.preProxies = settings.value.preProxies.filter(p => p.groupId !== subId);
+        ensureValidSelectedProxy();
         if (currentGroup.value === subId) currentGroup.value = 'manual';
         await saveSettings();
     };
@@ -208,7 +228,7 @@ export const useProxyStore = defineStore('proxy', () => {
         let addedCount = 0;
         const newNodes = [];
         for (const line of lines) {
-            if (!line.includes('://') && !line.includes(':')) continue;
+            if (!proxyService.validateProxyUrl(line).success) continue;
             const remark = getProxyRemark(line) || 'Batch Node';
             newNodes.push({
                 id: uuidv4(),
