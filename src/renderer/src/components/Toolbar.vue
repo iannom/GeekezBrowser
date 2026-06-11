@@ -39,6 +39,9 @@
             <button v-if="selectedCount > 0" class="outline" @click="handleBatchLaunch">
                 {{ `${t('batchLaunch')} (${selectedCount})` }}
             </button>
+            <button v-if="selectedCount > 0" class="outline" @click="openBatchEditModal">
+                {{ `${t('batchEdit')} (${selectedCount})` }}
+            </button>
             <button v-if="selectedCount > 0" class="outline" @click="openBatchCopyModal">
                 {{ `${t('batchCopy')} (${selectedCount})` }}
             </button>
@@ -162,7 +165,7 @@ const handleImportFull = async () => {
                     uiStore.showAlert(window.t('importSuccess') || 'Import successful. App will reload.');
                     setTimeout(() => location.reload(), 1500);
                 } else if (res) {
-                    uiStore.showAlert((window.t('importError') || 'Error: ') + (res.message || 'Unknown error'));
+                    uiStore.showAlert((window.t('importError') || 'Error: ') + (res.error || res.message || 'Unknown error'));
                 }
             }, 600);
         } catch (e) {
@@ -181,6 +184,8 @@ const handleImportYaml = async () => {
             await proxyStore.loadSettings();
             await profileStore.loadProfiles();
             uiStore.showAlert(window.t('msgImportSuccess') || 'Import successful');
+        } else {
+            uiStore.showAlert(window.t('importNoValidData') || 'No valid data found or import cancelled.');
         }
     } catch (e) {
         uiStore.showAlert("Import Failed: " + e.message);
@@ -212,6 +217,10 @@ const handleBatchLaunch = async () => {
 
 const openBatchCopyModal = () => {
     uiStore.openCopyModal([...profileStore.selectedIds]);
+};
+
+const openBatchEditModal = () => {
+    uiStore.openBatchEditModal();
 };
 
 const handleBatchDelete = () => {

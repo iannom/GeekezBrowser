@@ -1,7 +1,25 @@
 <template>
-    <div class="profile-item no-drag">
+    <div
+        :data-profile-id="profile.id"
+        class="profile-item no-drag"
+        :class="{ selected: isSelected, dragging: isDragging, 'drag-over': isDragOver }"
+        @dragend="handleDragEnd"
+        @dragover.prevent="handleDragOver"
+        @drop.prevent="handleDrop"
+    >
         <div class="profile-info">
             <div style="display:flex; align-items:center;">
+                <button
+                    type="button"
+                    class="sort-handle no-drag"
+                    draggable="true"
+                    title="拖拽排序"
+                    aria-label="拖拽排序"
+                    @dragstart.stop="handleDragStart"
+                    @dragend.stop="handleDragEnd"
+                >
+                    ⋮⋮
+                </button>
                 <input
                     type="checkbox"
                     class="batch-checkbox no-drag"
@@ -60,7 +78,11 @@ const props = defineProps({
     }
 });
 
+const emit = defineEmits(['drag-start', 'drag-over', 'drop', 'drag-end']);
+
 const t = (key) => window.t ? window.t(key) : key;
+const isDragging = computed(() => profileStore.draggingProfileId === props.profile.id);
+const isDragOver = computed(() => profileStore.dragOverProfileId === props.profile.id && !isDragging.value);
 
 const stringToColor = (str) => {
     if(!str) return '#ffffff';
@@ -102,6 +124,31 @@ const toggleSelected = () => {
     profileStore.toggleSelected(props.profile.id);
 };
 
+const handleDragStart = (event) => {
+    if (!event.target?.closest?.('.sort-handle')) {
+        event.preventDefault();
+        return;
+    }
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', props.profile.id);
+    profileStore.setDragState(props.profile.id, null);
+    emit('drag-start', props.profile.id);
+};
+
+const handleDragOver = () => {
+    emit('drag-over', props.profile.id);
+};
+
+const handleDrop = (event) => {
+    const sourceId = event.dataTransfer.getData('text/plain');
+    if (!sourceId) return;
+    emit('drop', { sourceId, targetId: props.profile.id });
+};
+
+const handleDragEnd = () => {
+    emit('drag-end');
+};
+
 const launch = async () => {
     const res = await profileService.launch(props.profile.id);
     if (!res.success && res.message) {
@@ -131,5 +178,31 @@ const remove = () => {
     height: 14px;
     margin-right: 8px;
     margin-bottom: 0;
+}
+
+.sort-handle {
+    width: 22px;
+    height: 22px;
+    margin-right: 8px;
+    padding: 0;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: grab;
+    line-height: 1;
+    font-size: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.sort-handle:hover {
+    border-color: var(--border);
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.sort-handle:active {
+    cursor: grabbing;
 }
 </style>

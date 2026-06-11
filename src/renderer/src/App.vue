@@ -15,6 +15,7 @@
     <!-- Modals (Controlled by uiStore) -->
     <CreateProfileModal :class="{ active: uiStore.addModalVisible }" />
     <EditProfileModal :class="{ active: uiStore.editModalVisible }" />
+    <BatchEditModal :class="{ active: uiStore.batchEditModalVisible }" />
     <CopyProfileModal :class="{ active: uiStore.copyModalVisible }" />
 
     <!-- Other Modals (Legacy wrapper components) -->
@@ -43,6 +44,7 @@ import Toolbar from './components/Toolbar.vue';
 import ProfileList from './components/ProfileList.vue';
 import CreateProfileModal from './components/CreateProfileModal.vue';
 import EditProfileModal from './components/EditProfileModal.vue';
+import BatchEditModal from './components/BatchEditModal.vue';
 import CopyProfileModal from './components/CopyProfileModal.vue';
 import ProxyModal from './components/ProxyModal.vue';
 import ExportModal from './components/ExportModal.vue';
@@ -113,10 +115,5 @@ onMounted(async () => {
     } catch (e) {
         console.error('[App] Initialization failed:', e);
     }
-
-    // 3. 诊断：增加全局点击监听器，帮助定位拦截层
-    window.addEventListener('click', (e) => {
-        console.log('[Diagnostic] Global Click at:', e.clientX, e.clientY, 'Target:', e.target);
-    }, true);
 });
 </script>

@@ -9,17 +9,24 @@ export const useProfileStore = defineStore('profile', () => {
     const searchText = ref('');
     const selectedTag = ref('');
     const selectedIds = ref([]);
+    const draggingProfileId = ref(null);
+    const dragOverProfileId = ref(null);
     const viewMode = ref(localStorage.getItem('geekez_view') || 'list');
 
     // Actions
     const loadProfiles = async () => {
         try {
-            profiles.value = await profileService.loadProfiles();
-            runningIds.value = await profileService.getRunningIds();
+            const loadedProfiles = await profileService.loadProfiles();
+            profiles.value = Array.isArray(loadedProfiles) ? loadedProfiles : [];
+            const loadedRunningIds = await profileService.getRunningIds();
+            runningIds.value = Array.isArray(loadedRunningIds) ? loadedRunningIds : [];
             const profileIdSet = new Set(profiles.value.map(p => p.id));
             selectedIds.value = selectedIds.value.filter(id => profileIdSet.has(id));
         } catch (e) {
             console.error('Failed to load profiles:', e);
+            profiles.value = [];
+            runningIds.value = [];
+            selectedIds.value = [];
         }
     };
 
@@ -76,6 +83,32 @@ export const useProfileStore = defineStore('profile', () => {
         selectedIds.value = [];
     };
 
+    const setSelectedIds = (ids = []) => {
+        if (!Array.isArray(ids)) {
+            selectedIds.value = [];
+            return;
+        }
+
+        const validIds = new Set(profiles.value.map(profile => profile.id));
+        const next = [];
+        const seen = new Set();
+        ids.forEach((id) => {
+            if (!validIds.has(id) || seen.has(id)) return;
+            seen.add(id);
+            next.push(id);
+        });
+        selectedIds.value = next;
+    };
+
+    const setDragState = (draggingId = null, overId = null) => {
+        draggingProfileId.value = draggingId;
+        dragOverProfileId.value = overId;
+    };
+
+    const setDragOverProfile = (id = null) => {
+        dragOverProfileId.value = id;
+    };
+
     const toggleSelectAllFiltered = () => {
         const filteredIds = filteredProfiles.value.map(profile => profile.id);
         const allSelected = filteredIds.length > 0 && filteredIds.every(id => selectedIds.value.includes(id));
@@ -121,9 +154,33 @@ export const useProfileStore = defineStore('profile', () => {
         }
     };
 
+    const updateProfilesBatch = async (items) => {
+        try {
+            const result = await profileService.updateProfilesBatch(items);
+            await loadProfiles();
+            return result;
+        } catch (e) {
+            console.error('Failed to batch update profiles:', e);
+            throw e;
+        }
+    };
+
+    const reorderProfiles = async (ids) => {
+        try {
+            await profileService.reorderProfiles(ids);
+            await loadProfiles();
+        } catch (e) {
+            console.error('Failed to reorder profiles:', e);
+            throw e;
+        }
+    };
+
     const deleteProfile = async (id) => {
         try {
-            await profileService.deleteProfile(id);
+            const result = await profileService.deleteProfile(id);
+            if (result && result.success === false) {
+                throw new Error(result.message || result.error || 'Delete failed');
+            }
             await loadProfiles();
         } catch (e) {
             console.error('Failed to delete profile:', e);
@@ -137,6 +194,8 @@ export const useProfileStore = defineStore('profile', () => {
         searchText,
         selectedTag,
         selectedIds,
+        draggingProfileId,
+        dragOverProfileId,
         viewMode,
         loadProfiles,
         toggleViewMode,
@@ -148,11 +207,16 @@ export const useProfileStore = defineStore('profile', () => {
         isSelected,
         toggleSelected,
         clearSelection,
+        setSelectedIds,
+        setDragState,
+        setDragOverProfile,
         toggleSelectAllFiltered,
         isRunning,
         createProfile,
         copyProfiles,
         updateProfile,
+        updateProfilesBatch,
+        reorderProfiles,
         deleteProfile
     };
 });

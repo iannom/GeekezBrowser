@@ -77,7 +77,10 @@ export const profileService = {
      */
     async deleteProfile(id) {
         try {
-            await ipcService.invoke('delete-profile', id);
+            const result = await ipcService.invoke('delete-profile', id);
+            if (result && result.success === false) {
+                throw new Error(result.error || result.message || 'Delete failed');
+            }
             return { success: true };
         } catch (error) {
             return { success: false, message: error.message || 'Delete failed' };
@@ -101,7 +104,25 @@ export const profileService = {
      * 更新环境配置
      */
     async updateProfile(profile) {
-        return await ipcService.invoke('update-profile', profile);
+        const result = await ipcService.invoke('update-profile', profile);
+        if (result === false || (result && result.success === false)) {
+            throw new Error(result?.error || result?.message || 'Update failed');
+        }
+        return result;
+    },
+
+    /**
+     * 批量更新环境配置
+     */
+    async updateProfilesBatch(items = []) {
+        return await ipcService.invoke('update-profiles-batch', items);
+    },
+
+    /**
+     * 保存环境列表顺序
+     */
+    async reorderProfiles(ids = []) {
+        return await ipcService.invoke('reorder-profiles', ids);
     },
 
     /**

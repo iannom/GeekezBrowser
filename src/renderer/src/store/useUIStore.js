@@ -6,6 +6,7 @@ export const useUIStore = defineStore('ui', () => {
     // Modal visibility states
     const addModalVisible = ref(false);
     const editModalVisible = ref(false);
+    const batchEditModalVisible = ref(false);
     const copyModalVisible = ref(false);
     const proxyModalVisible = ref(false);
     const exportModalVisible = ref(false);
@@ -48,6 +49,7 @@ export const useUIStore = defineStore('ui', () => {
     
     // Callbacks for legacy/store logic
     let confirmCallback = null;
+    let confirmCancelCallback = null;
     let inputCallback = null;
     let passwordCallback = null;
 
@@ -71,6 +73,13 @@ export const useUIStore = defineStore('ui', () => {
     const closeEditModal = () => {
         currentEditId.value = null;
         editModalVisible.value = false;
+    };
+
+    const openBatchEditModal = () => {
+        batchEditModalVisible.value = true;
+    };
+    const closeBatchEditModal = () => {
+        batchEditModalVisible.value = false;
     };
 
     const openCopyModal = (ids) => {
@@ -132,17 +141,24 @@ export const useUIStore = defineStore('ui', () => {
         alertModalVisible.value = true;
     };
 
-    const showConfirm = (msg, callback, notes = '') => {
+    const showConfirm = (msg, callback, notes = '', cancelCallback = null) => {
+        alertModalVisible.value = false;
         confirmMsg.value = msg;
         confirmNotes.value = notes;
         confirmCallback = callback;
+        confirmCancelCallback = cancelCallback;
         confirmModalVisible.value = true;
     };
 
     const handleConfirm = (result) => {
         confirmModalVisible.value = false;
-        if (result && confirmCallback) confirmCallback();
+        if (result && confirmCallback) {
+            confirmCallback();
+        } else if (!result && confirmCancelCallback) {
+            confirmCancelCallback();
+        }
         confirmCallback = null;
+        confirmCancelCallback = null;
     };
 
     const showInput = (title, callback) => {
@@ -181,6 +197,7 @@ export const useUIStore = defineStore('ui', () => {
     return {
         addModalVisible,
         editModalVisible,
+        batchEditModalVisible,
         copyModalVisible,
         proxyModalVisible,
         exportModalVisible,
@@ -210,6 +227,8 @@ export const useUIStore = defineStore('ui', () => {
         closeAddModal,
         openEditModal,
         closeEditModal,
+        openBatchEditModal,
+        closeBatchEditModal,
         openCopyModal,
         closeCopyModal,
         openExportModal,
