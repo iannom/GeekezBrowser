@@ -52,7 +52,7 @@ It is designed to solve multi-account association issues in cross-border e-comme
 ### 🧩 Workflow & Management
 *   **Extension Support**: Supports installing Chrome extensions (e.g., MetaMask, AdBlock) and customizing which environments they apply to.
 *   **Tag System**: Add custom tags (e.g., "TikTok", "US", "Main") for grouped management.
-*   **Safe Labeling**: Uses **dynamic watermark** to display environment names at the top of pages (e.g., `Profile-1`).
+*   **Safe Labeling**: Optional page markers can display environment names. They are disabled by default; enhanced watermark and top banner modes must be enabled manually in Settings.
 *   **Stable Multi-Instance**: Supports running multiple environments simultaneously with fully isolated ports and processes.
 *   **Remote Debugging Port (Advanced)**: Optional external Puppeteer/DevTools connection for automation (disabled by default for lower risk).
 
@@ -60,14 +60,14 @@ It is designed to solve multi-account association issues in cross-border e-comme
 
 ### Method 1: Download Installer (Recommended)
 Go to the [**Releases**](https://github.com/EchoHS/GeekezBrowser/releases) page and download the package for your platform:
-*   **Windows**: `GeekEZ Browser-{version}-win-x64.exe`
-*   **macOS (ARM64)**: `GeekEZ Browser-{version}-mac-arm64.dmg`
-*   **macOS (Intel)**: `GeekEZ Browser-{version}-mac-x64.dmg`
-*   **Linux**: `GeekEZ Browser-{version}-linux-x64.AppImage`
+*   **Windows**: `GeekEZ-Browser-{version}-win-x64.exe`
+*   **macOS (ARM64)**: `GeekEZ-Browser-{version}-mac-arm64.dmg`
+*   **macOS (Intel)**: `GeekEZ-Browser-{version}-mac-x64.dmg`
+*   **Linux**: `GeekEZ-Browser-{version}-linux-x64.AppImage`
 
 ### Method 2: Run from Source
 
-**Prerequisites**: Node.js (v16+) and Git.
+**Prerequisites**: Node.js `^20.19.0 || >=22.12.0` and Git.
 
 1.  **Clone the repository**
     ```bash
@@ -78,6 +78,11 @@ Go to the [**Releases**](https://github.com/EchoHS/GeekezBrowser/releases) page 
 2.  **Install dependencies**
     ```bash
     npm install
+    ```
+
+    Resource downloads are skipped during normal dependency installation. To refresh bundled Xray and Chrome resources explicitly, run:
+    ```bash
+    npm run setup:resources
     ```
 
 3.  **Start the app**

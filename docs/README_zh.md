@@ -52,7 +52,7 @@
 ### 🧩 工作流与管理
 *   **插件支持**: 支持安装 Chrome 扩展（如 MetaMask, AdBlock），并自定义配置使用环境。
 *   **标签系统**: 为环境添加彩色标签（如 "TikTok", "美国", "主号"），便于分组管理。
-*   **安全备注**: 使用 **动态水印** 在页面上方显示环境名称（如 `Profile-1`）。
+*   **安全备注**: 可选页面标识可显示环境名称；默认关闭，增强水印和顶部横幅需在设置中手动启用。
 *   **稳定多开**: 支持同时运行多个环境，端口和进程完全独立互不干扰。
 *   **远程调试端口 (高级)**: 可选开启外部 Puppeteer/DevTools 连接，支持自动化控制（默认关闭以降低风险）。
 
@@ -60,14 +60,14 @@
 
 ### 方法 1: 下载安装包 (推荐)
 前往 [**Releases**](https://github.com/EchoHS/GeekezBrowser/releases) 页面下载适配您系统的安装包：
-*   **Windows**: `GeekEZ Browser-{version}-win-x64.exe`
-*   **macOS (ARM64)**: `GeekEZ Browser-{version}-mac-arm64.dmg`
-*   **macOS (Intel)**: `GeekEZ Browser-{version}-mac-x64.dmg`
-*   **Linux**: `GeekEZ Browser-{version}-linux-x64.AppImage`
+*   **Windows**: `GeekEZ-Browser-{version}-win-x64.exe`
+*   **macOS (ARM64)**: `GeekEZ-Browser-{version}-mac-arm64.dmg`
+*   **macOS (Intel)**: `GeekEZ-Browser-{version}-mac-x64.dmg`
+*   **Linux**: `GeekEZ-Browser-{version}-linux-x64.AppImage`
 
 ### 方法 2: 源码运行
 
-**前置要求**: 安装 Node.js (v16+) 和 Git。
+**前置要求**: 安装 Node.js `^20.19.0 || >=22.12.0` 和 Git。
 
 1.  **克隆仓库**
     ```bash
@@ -78,6 +78,11 @@
 2.  **安装依赖**
     ```bash
     npm install
+    ```
+
+    普通依赖安装会跳过资源下载。如需显式刷新内置 Xray 和 Chrome 资源，请运行：
+    ```bash
+    npm run setup:resources
     ```
 
 3.  **启动软件**

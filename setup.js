@@ -12,6 +12,9 @@ const PLATFORM_ARCH = `${os.platform()}-${os.arch()}`; // e.g., darwin-arm64, wi
 const BIN_DIR = path.join(RESOURCES_BIN, PLATFORM_ARCH);
 const GH_PROXY = 'https://gh-proxy.com/';
 const XRAY_API_URL = 'https://api.github.com/repos/XTLS/Xray-core/releases/latest';
+const POSTINSTALL_MODE = process.argv.includes('--postinstall');
+const FORCE_SETUP = process.env.GEEKEZ_SETUP_RESOURCES === '1';
+const SKIP_SETUP = process.env.GEEKEZ_SKIP_SETUP === '1';
 
 // --- 辅助工具：格式化字节 ---
 function formatBytes(bytes) {
@@ -188,6 +191,11 @@ function extractZip(zipPath, destDir) {
 
 async function main() {
     try {
+        if (SKIP_SETUP || (POSTINSTALL_MODE && !FORCE_SETUP)) {
+            console.log('Resource setup skipped. Run npm run setup:resources or set GEEKEZ_SETUP_RESOURCES=1 to download browser resources.');
+            process.exit(0);
+        }
+
         // 1. 准备 Xray
         if (!fs.existsSync(BIN_DIR)) fs.mkdirSync(BIN_DIR, { recursive: true });
 
@@ -225,10 +233,7 @@ async function main() {
             const srcPath = path.join(BIN_DIR, file);
             const destPath = path.join(RESOURCES_BIN, file);
             if (fs.existsSync(srcPath)) {
-                // Only copy if not exists or source is newer
-                if (!fs.existsSync(destPath)) {
-                    fs.copyFileSync(srcPath, destPath);
-                }
+                fs.copyFileSync(srcPath, destPath);
                 // Remove from platform dir to save space
                 fs.unlinkSync(srcPath);
             }
@@ -242,19 +247,15 @@ async function main() {
         const { install } = require('@puppeteer/browsers');
         const BUILD_ID = '147.0.7727.50';
         const DOWNLOAD_ROOT = path.join(__dirname, 'resources', 'puppeteer');
+        const TEMP_DOWNLOAD_ROOT = path.join(__dirname, 'resources', `.puppeteer-${Date.now()}.tmp`);
         const MIRROR_URL = 'https://npmmirror.com/mirrors/chrome-for-testing';
-
-        if (fs.existsSync(DOWNLOAD_ROOT)) {
-            console.log(`🧹 Cleaning existing Chrome directory...`);
-            fs.rmSync(DOWNLOAD_ROOT, { recursive: true, force: true });
-        }
 
         const baseUrlChrome = isGlobal ? undefined : MIRROR_URL;
 
         const chromeStartTime = Date.now();
 
         const result = await install({
-            cacheDir: DOWNLOAD_ROOT,
+            cacheDir: TEMP_DOWNLOAD_ROOT,
             browser: 'chrome',
             buildId: BUILD_ID,
             unpack: true,
@@ -264,9 +265,31 @@ async function main() {
             }
         });
 
+        const targetPath = path.join(DOWNLOAD_ROOT, path.relative(TEMP_DOWNLOAD_ROOT, result.path));
+        if (!fs.existsSync(result.path)) {
+            throw new Error(`Chrome install path missing after download: ${result.path}`);
+        }
+        const backupRoot = fs.existsSync(DOWNLOAD_ROOT)
+            ? path.join(__dirname, 'resources', `.puppeteer-${Date.now()}.bak`)
+            : null;
+        if (backupRoot) {
+            fs.renameSync(DOWNLOAD_ROOT, backupRoot);
+        }
+        try {
+            fs.renameSync(TEMP_DOWNLOAD_ROOT, DOWNLOAD_ROOT);
+        } catch (err) {
+            if (backupRoot && fs.existsSync(backupRoot) && !fs.existsSync(DOWNLOAD_ROOT)) {
+                fs.renameSync(backupRoot, DOWNLOAD_ROOT);
+            }
+            throw err;
+        }
+        if (backupRoot && fs.existsSync(backupRoot)) {
+            fs.rmSync(backupRoot, { recursive: true, force: true });
+        }
+
         process.stdout.write('\n'); // 换行，避免最后一行被吞
         console.log('✅ Chrome downloaded successfully!');
-        console.log(`📂 Install Path: ${result.path}`);
+        console.log(`📂 Install Path: ${targetPath}`);
 
         console.log('✨ All Setup Completed! Exiting...');
         process.exit(0);
